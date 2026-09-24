@@ -19,7 +19,7 @@
  * required because rows now contain ANSI sequences.
  */
 
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Job,
     StripMouseEvent,
@@ -63,6 +63,41 @@ const QUIET_STATES: ReadonlySet<StripState> = new Set(["completed", "killed"]);
  */
 const LOUD_STATES: ReadonlySet<StripState> = new Set(["stalled", "failed"]);
 
+// --- Responsive grid -------------------------------------------------------
+
+/** Narrower than this and a cell stops being readable, so use fewer columns. */
+const STRIP_MIN_CELL = 44;
+/** Ceiling on columns, so an ultrawide terminal does not shred the row. */
+const STRIP_MAX_COLS = 4;
+/** Fixed sub-columns inside a cell, so elapsed time aligns down a column. */
+const STRIP_NAME_W = 12;
+const STRIP_ELAPSED_W = 5;
+/** Gutter between cells — the padding that separates one column from the next. */
+const STRIP_GAP = 2;
+
+type StripJobRow = Extract<StripRow, { kind: "job" }>;
+
+/** Cells per line for a given width. */
+function columnCount(width: number): number {
+    return Math.max(1, Math.min(STRIP_MAX_COLS, Math.floor(width / STRIP_MIN_CELL)));
+}
+
+/** Fixed cell width for that column count — cells stay uniform, not ragged. */
+function cellWidth(width: number): number {
+    return Math.max(1, Math.floor(width / columnCount(width)));
+}
+
+/** Truncate to `w` columns and pad back out to exactly `w`. */
+function fit(text: string, w: number): string {
+    const t = truncateToWidth(text, w);
+    return t + " ".repeat(Math.max(0, w - visibleWidth(t)));
+}
+
+/** Pad a styled cell out to the full cell width; the padding is the gutter. */
+function padTo(cell: string, w: number): string {
+    return cell + " ".repeat(Math.max(0, w - visibleWidth(cell)));
+}
+
 class StripComponent implements StripWidgetComponent {
     // Plain fields, not constructor parameter properties: Pi loads extensions
     // through a TS transform whose feature support we do not control here.
@@ -92,21 +127,68 @@ class StripComponent implements StripWidgetComponent {
     }
 
     render(width: number): string[] {
-        return this.getRows().map((row) => {
-            if (row.kind === "toggle") {
-                return truncateToWidth(this.theme.fg("dim", row.text), width);
-            }
+        const rows = this.getRows();
+        if (rows.length === 0) return [];
 
-            const { glyph, slot } = STATE_STYLE[row.state];
-            const head = this.theme.fg(slot, glyph);
-            const body = `${row.name.padEnd(15)} ${row.detail.padEnd(24)} ${row.elapsed}`;
-            const text = QUIET_STATES.has(row.state)
-                ? this.theme.fg("dim", body)
-                : LOUD_STATES.has(row.state)
-                  ? this.theme.fg(slot, body)
-                  : body;
-            return truncateToWidth(`${head} ${text}`, width);
-        });
+        // The toggle always sits last and spans the full width, so it is not
+        // part of the grid.
+        const last = rows[rows.length - 1];
+        const toggle = last.kind === "toggle" ? last : undefined;
+        const jobs = toggle ? rows.slice(0, -1) : rows;
+
+        const cols = columnCount(width);
+        const cw = cellWidth(width);
+        const contentW = Math.max(1, cw - STRIP_GAP);
+
+        const lines: string[] = [];
+        for (let i = 0; i < jobs.length; i += cols) {
+            let line = "";
+            for (let c = 0; c < cols && i + c < jobs.length; c++) {
+                line += padTo(this.renderJob(jobs[i + c] as StripJobRow, contentW), cw);
+            }
+            lines.push(line.replace(/ +$/, ""));
+        }
+
+        if (toggle) lines.push(truncateToWidth(this.theme.fg("dim", toggle.text), width));
+        return lines;
+    }
+
+    /** One cell: coloured glyph + name, elapsed, then detail (truncated last). */
+    private renderJob(row: StripJobRow, contentW: number): string {
+        const { glyph, slot } = STATE_STYLE[row.state];
+        const head = this.theme.fg(slot, glyph);
+        const bodyPlain = `${fit(row.name, STRIP_NAME_W)} ${fit(row.elapsed, STRIP_ELAPSED_W)} ${row.detail}`;
+        const body = QUIET_STATES.has(row.state)
+            ? this.theme.fg("dim", bodyPlain)
+            : LOUD_STATES.has(row.state)
+              ? this.theme.fg(slot, bodyPlain)
+              : bodyPlain;
+        return truncateToWidth(`${head} ${body}`, contentW);
+    }
+
+    /**
+     * Map a mouse position to a row index.
+     *
+     * Columns change this mapping: `y` is now a LINE and `x` selects the cell
+     * within it. The toggle spans the full width on its own line, so it is
+     * matched by line rather than by cell.
+     */
+    private rowIndexAt(event: StripMouseEvent): number | undefined {
+        const rows = this.getRows();
+        if (rows.length === 0) return undefined;
+
+        const hasToggle = rows[rows.length - 1].kind === "toggle";
+        const jobCount = hasToggle ? rows.length - 1 : rows.length;
+
+        const cols = columnCount(event.width);
+        const cw = cellWidth(event.width);
+        const jobLines = Math.ceil(jobCount / cols);
+
+        if (event.y >= jobLines) {
+            return hasToggle && event.y === jobLines ? rows.length - 1 : undefined;
+        }
+        const index = event.y * cols + Math.floor(event.x / cw);
+        return index < jobCount ? index : undefined;
     }
 
     handleMouse(event: StripMouseEvent): StripMouseResult | undefined {
@@ -116,15 +198,18 @@ class StripComponent implements StripWidgetComponent {
         if (event.button !== "left") return undefined;
         if (event.type !== "press" && event.type !== "click") return undefined;
 
+        // Record the resolved ROW index on press, not the raw line: the layout
+        // is recomputed from width, so a stale y could point at another cell.
         if (event.type === "press") {
-            this.pressedIndex = event.y;
+            this.pressedIndex = this.rowIndexAt(event);
             return { handled: true };
         }
 
-        // click = activation, at the press position when we have one.
-        const y = this.pressedIndex ?? event.y;
+        const index = this.pressedIndex ?? this.rowIndexAt(event);
         this.pressedIndex = undefined;
-        const row = this.getRows()[y];
+        if (index === undefined) return undefined;
+
+        const row = this.getRows()[index];
         if (!row) return undefined;
 
         if (row.kind === "toggle") this.onToggle();

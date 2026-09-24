@@ -144,6 +144,38 @@ messaged the agent and cancelled, persisting nothing. It now also invokes an
 a real state to render instead of a log-mtime heuristic that would false-positive
 on any legitimately quiet build.
 
+### Responsive grid
+
+Rows are laid out in columns sized from the live render width, so a wide terminal
+spends its horizontal space instead of putting one task per line:
+
+| width | columns | cell | detail chars |
+|---|---|---|---|
+| 60 | 1 | 60 | 37 |
+| 80 | 1 | 80 | 57 |
+| 120 | 2 | 60 | 37 |
+| 160 | 3 | 53 | 30 |
+| 200 | 4 | 50 | 27 |
+
+`STRIP_MIN_CELL = 44` (narrower and a cell stops being readable, so use fewer
+columns) and `STRIP_MAX_COLS = 4`. Detail truncates **last** because it is the
+least critical field, so a long command degrades to `my_very_long_comma...`
+rather than pushing the elapsed time out of the cell. The toggle line spans the
+full width on its own row and is not part of the grid.
+
+It also saves vertical space: eight jobs is eight lines at 60 columns but **four**
+at 160 — which matters, because the component overload has no `MAX_WIDGET_LINES`
+guard.
+
+**The mouse mapping changed.** `y` is now a LINE and `x` selects the cell:
+
+```
+index = y * columnCount(width) + floor(x / cellWidth(width))
+```
+
+`press` records the resolved *row index*, not the raw line, so a relayout between
+press and click cannot point at a neighbouring cell.
+
 ### Mouse click contract
 
 Pi delivers **both** a `press` and a `click` for one physical click. Handling each
@@ -191,7 +223,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.3-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.4.0-pi15
 ```
 
 ## Rebase onto a newer upstream release
