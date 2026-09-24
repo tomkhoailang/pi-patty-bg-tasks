@@ -5,10 +5,9 @@
  * string form is capped at 10 lines and cannot receive pointer events, so this
  * module uses the component form: each rendered line is a click target.
  *
- * Two click zones per row: the glyph expands the job **inline**, the name opens
- * the **modal**. Inline expansion is drawn inside this component — placement
- * under the clicked row is only possible if we render it ourselves, since
- * `ctx.ui.custom()` takes over the interactive area below the widget.
+ * A click anywhere on a row toggles it inline. There is deliberately no name
+ * zone: routing a name click to a modal conflicted with a keybinding and stole
+ * keyboard focus, which broke the expand keys. The modal returns via `o`/Enter.
  *
  * Row hit-testing mirrors Pi's own `SelectList`: `TuiMouseEvent.y` is zero-based
  * and local to the receiving component. `layout()` is the single source of truth
@@ -80,8 +79,6 @@ const STRIP_NAME_W = 12;
 const STRIP_ELAPSED_W = 5;
 /** Gutter between cells — the padding that separates one column from the next. */
 const STRIP_GAP = 2;
-/** Glyph zone width inside a cell: the glyph plus its trailing space. */
-const STRIP_GLYPH_W = 2;
 
 type StripJobRow = Extract<StripRow, { kind: "job" }>;
 
@@ -92,9 +89,7 @@ type StripLine =
     | { kind: "toggle" };
 
 /** What a click landed on. */
-type StripHit =
-    | { kind: "job"; row: StripJobRow; zone: "glyph" | "name" }
-    | { kind: "toggle" };
+type StripHit = { kind: "job"; row: StripJobRow } | { kind: "toggle" };
 
 /** Cells per line for a given width. */
 function columnCount(width: number): number {
@@ -183,32 +178,27 @@ class StripComponent implements StripWidgetComponent {
             ? rows.findIndex((row) => row.kind === "job" && row.job.id === expandedId)
             : -1;
 
-        // The expanded row LEAVES the grid and takes a full-width line of its
-        // own. Forcing the whole strip to one column anchored the detail but
-        // reflowed every other row, which is a bigger visual jolt than the
-        // problem it solved. Breaking out only that row keeps the grid stable
-        // AND puts the detail unambiguously beneath its own row.
+        // The grid stays RIGID: the expanded row keeps its cell and the detail
+        // is inserted below the grid LINE that holds it. Breaking the row out to
+        // a full-width line anchored the detail better but reflowed the
+        // neighbours, and any reflow on expand/navigate reads as a glitch. No
+        // shift is the stronger requirement, so the detail is attributed by the
+        // job name on its meta line instead of by indentation.
         const lines: StripLine[] = [];
-        let pending: number[] = [];
-        const flush = () => {
-            if (pending.length > 0) {
-                lines.push({ kind: "grid", rowIndices: pending, cellW: gridW });
-                pending = [];
-            }
-        };
+        for (let i = 0; i < rows.length; i += cols) {
+            const rowIndices: number[] = [];
+            for (let c = 0; c < cols && i + c < rows.length; c++) rowIndices.push(i + c);
+            lines.push({ kind: "grid", rowIndices, cellW: gridW });
 
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            if (i === detailAt && row && row.kind === "job") {
-                flush();
-                lines.push({ kind: "grid", rowIndices: [i], cellW: width });
-                lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
-                continue;
+            if (detailAt >= 0 && Math.floor(detailAt / cols) === Math.floor(i / cols)) {
+                const row = rows[detailAt];
+                if (row && row.kind === "job") {
+                    // Rendered here, once: hitAt needs the height, and rendering
+                    // it twice would read the log twice.
+                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
+                }
             }
-            pending.push(i);
-            if (pending.length === cols) flush();
         }
-        flush();
 
         let toggleText: string | undefined;
         if (!this.actions.listExpanded()) {
@@ -328,9 +318,6 @@ class StripComponent implements StripWidgetComponent {
         if (line.kind === "toggle") return { kind: "toggle" };
         if (line.kind === "detail") return undefined;
 
-        // Each grid line carries its own cell width: the expanded row occupies a
-        // full-width line while every other line stays in the grid, so a single
-        // width for the whole strip would mis-map one of them.
         const slotInLine = Math.floor(event.x / line.cellW);
         const index = line.rowIndices[slotInLine];
         if (index === undefined) return undefined;
@@ -338,10 +325,11 @@ class StripComponent implements StripWidgetComponent {
         const row = rows[index];
         if (!row || row.kind !== "job") return undefined;
 
-        // Within the cell, the glyph occupies the first columns and the name
-        // begins after them. Clicking the glyph expands; the name opens modal.
-        const inCell = event.x - slotInLine * line.cellW;
-        return { kind: "job", row, zone: inCell < STRIP_GLYPH_W ? "glyph" : "name" };
+        // Any click on the row toggles it. There is no name zone: sending the
+        // name click to a modal conflicted with a keybinding and stole keyboard
+        // focus, which is what made the expand keys stop responding. The modal
+        // returns later via `o` / Enter only.
+        return { kind: "job", row };
     }
 
     handleMouse(event: StripMouseEvent): StripMouseResult | undefined {
@@ -368,17 +356,13 @@ class StripComponent implements StripWidgetComponent {
             return { handled: true };
         }
 
-        if (hit.zone === "glyph") {
-            // Expanding is the keyboard-driven mode, so claim focus with it —
-            // `esc`, `j`/`k` and `x` only reach us while we hold it.
-            const same = Boolean(this.actions.expandedJobId()) && this.actions.expandedJobId() === hit.row.job.id;
-            this.actions.expand(same ? undefined : hit.row.job.id);
-            if (same) this.releaseFocus();
-            return { handled: true, focus: !same };
-        }
-
-        this.actions.select(hit.row.job);
-        return { handled: true };
+        // Expanding is the keyboard-driven mode, so claim focus with it —
+        // `esc`, `j`/`k` and `x` only reach us while we hold it.
+        const current = this.actions.expandedJobId();
+        const same = Boolean(current) && current === hit.row.job.id;
+        this.actions.expand(same ? undefined : hit.row.job.id);
+        if (same) this.releaseFocus();
+        return { handled: true, focus: !same };
     }
 
     /**

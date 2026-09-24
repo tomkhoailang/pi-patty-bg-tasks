@@ -224,33 +224,40 @@ whole list, never under the clicked row. Drawing the detail inside the strip is
 the only way to put it where the user clicked.
 
 With multiple columns there is no "below the clicked row" — the row shares a line
-with others. The first attempt forced the **whole strip** to one column while a
-row was expanded. That anchored the detail correctly but reflowed every other row,
-which is a bigger visual jolt than the problem it solved.
+with others. Two attempts failed before the current one:
 
-The expanded row now **leaves the grid** and takes a full-width line of its own,
-with the detail beneath it; every other row keeps its columns:
+1. **Detail under the shared grid line** — expanding the *second* column appeared
+to change only the **content** of a block still sitting under the first.
+2. **The expanded row breaks out to a full-width line** — anchored the detail, but
+reflowed the neighbours, and any reflow on expand/navigate reads as a glitch.
+3. **Whole strip forced to one column** — anchored the detail but reflowed
+everything. Worse than the problem.
+
+The grid is now **RIGID**: the expanded row keeps its cell, and the detail is
+inserted below the grid **line** holding it. Nothing moves on expand or on
+`j`/`k` navigation within a line — the content changes in place. No-shift turned
+out to be the stronger requirement than per-cell anchoring, so the detail is
+attributed by the **job name on its meta line** rather than by position:
 
 ```
- ▶ alpha      5s   tick 0
- ▼ bravo      5s   tick 1          ← own full-width line
-    ↳ bravo · running · 5s
-    ↳ bravo tick 4
+ ▼ alpha      5s   tick 0      ▶ bravo    5s   tick 1     ← grid intact, 2 cols
+    ↳ alpha · running · 5s
+    ↳ alpha tick 3
       esc close · j/k switch · x kill · o modal
- ▶ charlie    5s   tick 2      ▶ delta   5s   tick 3
+ ▶ charlie    5s   tick 2      ▶ delta    5s   tick 3
 ```
 
-Because the layout is now mixed, each grid line carries **its own cell width** —
-a single width for the strip would mis-map either the full-width line or the
-grid lines. `hitAt()` reads that per-line width.
+Because the layout is mixed in principle, each grid line still carries **its own
+cell width**, and `hitAt()` reads that per-line width.
 
-Without the break-out, the detail was drawn under whichever cell happened to be
-leftmost: expanding the *second* column appeared to change only the **content** of
-a block still sitting under the first.
+The expanded row shows a **down-chevron (`▼`)** in place of the left-chevron.
+Re-clicking collapses it, but with an identical glyph for both states that was
+undiscoverable.
 
-The expanded row also shows a **down-chevron (`▼`)** in place of the
-left-chevron. Re-clicking collapses it, but with an identical glyph for both
-states that was undiscoverable — there was no cue that the row was open.
+**There is no name zone.** A click anywhere on a row toggles it. Routing the name
+click to a modal conflicted with a keybinding and **stole keyboard focus**, which
+is what made the expand keys stop responding. The modal returns later via `o` /
+Enter only.
 
 A detail block occupies **several rendered lines**, so the line map stores its
 rendered lines rather than a row index, and `hitAt()` walks the map **accumulating
@@ -343,7 +350,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.2-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.3-pi15
 ```
 
 ## Rebase onto a newer upstream release
