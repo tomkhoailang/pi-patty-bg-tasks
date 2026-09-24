@@ -142,6 +142,22 @@ the first pass had mutated it — so clicking `▾ +N more` expanded **and** ope
 whichever job had landed on that row index. `handleMouse` now mirrors Pi's
 `SelectList`: `press` records the row index, `click` activates using it.
 
+### Stalled jobs are pinned
+
+A stalled job is blocked on a human and will never produce another byte, so it is
+an **outstanding decision** — not in-flight work. It is therefore its own bucket,
+outside the collapse slice, exactly like failures: the limit cannot hide it.
+
+Before this it competed for visible slots as ordinary running work, so a stalled
+job could sit behind `+N more` while yellow — invisible precisely when it needed
+attention.
+
+The distinction matters because a merely *quiet* job is usually still working (a
+long compile emits nothing for minutes). Patty only flags a stall when output
+stops growing **and** the tail matches an interactive-prompt pattern (`(y/n)`,
+`Overwrite?`, `Continue?` …), which means the job is waiting on input that will
+never arrive.
+
 ### Collapse count
 
 The toggle counts what expansion *would* reveal, not merely what is hidden at that
@@ -165,7 +181,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.1-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.2-pi15
 ```
 
 ## Rebase onto a newer upstream release

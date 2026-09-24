@@ -201,6 +201,8 @@ function byFinishDesc(a: Job, b: Job): number {
  * Build the rows the strip renders, applying the attention policy:
  *
  *   - running jobs fill the visible budget first (STRIP_VISIBLE_LIMIT)
+ *   - stalled jobs are pinned: blocked on a human, they will never progress,
+ *     so the limit must not be able to hide them
  *   - failures ride BELOW the running rows and are never displaced by that
  *     limit — an unacknowledged failure is a decision still outstanding
  *   - completed / killed are expanded-only: you either just stopped it or it
@@ -210,9 +212,13 @@ function byFinishDesc(a: Job, b: Job): number {
 function buildStripRows(reg: BackgroundRegistry): StripRow[] {
     const jobs = Array.from(reg.jobs.values());
 
-    const running = jobs
-        .filter((job) => job.status === "running")
-        .map((job) => jobRow(job, job.stalled ? "stalled" : "running"));
+    const live = jobs.filter((job) => job.status === "running");
+
+    // A stalled job is blocked on a human and will never produce another byte,
+    // so it is an outstanding decision — not ordinary in-flight work. It gets
+    // the same protection as failures and is never displaced by the limit.
+    const stalled = live.filter((job) => job.stalled).map((job) => jobRow(job, "stalled"));
+    const running = live.filter((job) => !job.stalled).map((job) => jobRow(job, "running"));
 
     const failed = jobs
         .filter((job) => job.status === "failed")
@@ -230,12 +236,12 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
         : [];
 
     const visibleRunning = reg.stripExpanded ? running : running.slice(0, STRIP_VISIBLE_LIMIT);
-    const rows = [...visibleRunning, ...failed, ...quiet];
+    const rows = [...visibleRunning, ...stalled, ...failed, ...quiet];
 
     // Count what expansion WOULD reveal, not merely what is hidden right now:
     // `quiet` is empty while collapsed, so comparing against rows.length alone
     // reported "nothing hidden" and left killed/completed jobs unreachable.
-    const reachable = running.length + failed.length + quietPool.length;
+    const reachable = running.length + stalled.length + failed.length + quietPool.length;
 
     if (!reg.stripExpanded && reachable > rows.length) {
         rows.push({ kind: "toggle", text: `▾ +${reachable - rows.length} more` });
