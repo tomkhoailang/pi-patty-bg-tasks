@@ -1,7 +1,9 @@
 /**
  * Keyboard shortcut registration.
  *
- *   - Ctrl+B (and Ctrl+Shift+B alias): move the foreground bash to background
+ *   - Ctrl+Shift+B: move the foreground bash to background
+ *     (ctrl+b is deliberately NOT bound — Pi binds it to the editor's
+ *     `tui.editor.cursorLeft`, and it is tmux's prefix key)
  *   - Ctrl+Shift+J / Shift+Down: open the background task manager
  *   - Ctrl+Shift+X: kill the most recent running job
  */
@@ -22,17 +24,14 @@ export function registerShortcuts(
     pi: ExtensionAPI,
     reg: BackgroundRegistry
 ): void {
-    // Primary background shortcut — Ctrl+B, matching Claude Code. Inside a tmux
-    // session Ctrl+B is tmux's prefix key and must be pressed twice; the live
-    // hint shown while a command runs says so.
-    pi.registerShortcut("ctrl+b", {
-        description: "Background the current foreground process",
-        handler: async (ctx) => handleCtrlB(reg, pi, ctx),
-    });
-
-    // Alias for muscle memory / terminals that remap Ctrl+B.
+    // Deliberately NO ctrl+b. Pi binds it to `tui.editor.cursorLeft`, and
+    // registerShortcut has no priority or defer option — an extension binding
+    // always wins — so registering it silently shadowed the editor's
+    // cursor-left. It is also tmux's prefix key, so it would be swallowed there
+    // regardless. `/bg` does the same thing, and the auto-background timeout plus
+    // typing-while-running cover the common cases.
     pi.registerShortcut("ctrl+shift+b", {
-        description: "Background the current foreground process (alias for Ctrl+B)",
+        description: "Background the current foreground process",
         handler: async (ctx) => handleCtrlB(reg, pi, ctx),
     });
 
@@ -53,7 +52,7 @@ export function registerShortcuts(
 }
 
 /**
- * Ctrl+B / Ctrl+Shift+B handler — hand control back to the agent (Claude Code
+ * Ctrl+Shift+B handler — hand control back to the agent (Claude Code
  * parity): background the running work and, if a message is queued, interrupt
  * the turn so it reaches the agent right away. See lifecycle.takeControl.
  */

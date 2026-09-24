@@ -461,10 +461,27 @@ PI_PATTY_STRIP_LINES=5 pi    # allow 5 lines before collapsing
 ## Change 4 — the ctrl+b hint is removed
 
 `tools/bash.ts` no longer shows the `(ctrl+b to run in background)` widget while a
-foreground command runs. The shortcut itself still works — only the on-screen
-advertisement is gone.
+foreground command runs, and `ctrl+b` is no longer **registered** either.
 
-Consequence worth knowing: nothing now advertises that `ctrl+b` exists. Find it
+### Why ctrl+b is gone entirely
+
+It collided with Pi:
+
+```
+Extension shortcut conflict: 'ctrl+b' is built-in shortcut for
+  tui.editor.cursorLeft and .../index.ts. Using .../index.ts.
+```
+
+`registerShortcut(shortcut, { description, handler })` has **no priority or defer
+option** — an extension binding always wins — so patty was silently shadowing the
+editor's cursor-left. It is also tmux's prefix key, so it would be swallowed there
+regardless.
+
+`ctrl+shift+b` stays as the manual trigger and `/bg` does the same thing. Nothing
+else collided: `ctrl+shift+b`, `ctrl+shift+j`, `shift+down` and `ctrl+shift+x` are
+all clear of Pi's built-ins.
+
+Consequence worth knowing: nothing advertises the manual trigger any more. Find it
 via `/hotkeys` or these docs. The progress poller still runs, so there is still
 feedback that a command is in flight; what is lost is the cue that it *can* be
 backgrounded.
@@ -545,7 +562,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.9-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.10-pi15
 ```
 
 ## Rebase onto a newer upstream release
