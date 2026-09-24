@@ -176,6 +176,17 @@ index = y * columnCount(width) + floor(x / cellWidth(width))
 `press` records the resolved *row index*, not the raw line, so a relayout between
 press and click cannot point at a neighbouring cell.
 
+### Status-line counters must not double-count
+
+`stalled` *refines* `running`, so a plain `status === "running"` filter includes
+stalled jobs. The strip split them into separate buckets, but the status line did
+not — so two stalled jobs rendered as `▶ 2 running · ⚠ 2 stalled`, reporting four
+jobs when there were two, and claiming live work that did not exist.
+
+The counters are now disjoint (`running` excludes stalled), while a separate
+`liveCount` — running **and** stalled — drives the ticker, so elapsed times keep
+counting on a stalled row even when no healthy work is running.
+
 ### Mouse click contract
 
 Pi delivers **both** a `press` and a `click` for one physical click. Handling each
@@ -223,7 +234,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.4.0-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.4.1-pi15
 ```
 
 ## Rebase onto a newer upstream release

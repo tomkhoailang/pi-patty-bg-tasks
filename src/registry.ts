@@ -266,7 +266,11 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
 export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
     const rows = buildStripRows(reg);
     const jobs = Array.from(reg.jobs.values());
-    const runningCount = jobs.filter((job) => job.status === "running").length;
+    /** Running AND stalled — drives the ticker so elapsed times keep counting. */
+    const liveCount = jobs.filter((job) => job.status === "running").length;
+    /** Genuinely healthy work. A stalled job is its own segment, so these two
+     *  must not overlap or the same job is counted twice in the status line. */
+    const runningCount = jobs.filter((job) => job.status === "running" && !job.stalled).length;
     const stalledCount = jobs.filter((job) => job.status === "running" && job.stalled).length;
     const failedCount = jobs.filter((job) => job.status === "failed").length;
     const isTui = ctx.mode === "tui";
@@ -333,7 +337,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
         ctx.ui.setStatus("background-jobs", statusText);
     }
 
-    if (runningCount > 0) {
+    if (liveCount > 0) {
         try {
             reg.stripTui?.requestRender();
         } catch {
