@@ -503,6 +503,36 @@ than a growing number.
 Sites updated: the strip row, the detail block's meta line, `terminalDurationMs`
 used by stats, both `/bg-list` durations, and `statusLabel` / `formatJobLine`.
 
+## Change 6 — hours in durations, and the expanded row survives completion
+
+### The elapsed column elided normal durations
+
+The strip's elapsed sub-column was **5 characters** and `formatDuration` emitted
+`${mins}m${secs}s` without ever rolling into hours. So `15m15s` — an entirely
+ordinary duration — is six characters and rendered as `15...`, with visible
+whitespace after it because the elision came from the *fixed sub-column*, not from
+the cell running out of room.
+
+**The column was the real fault**: everything over ten minutes with two-digit
+seconds broke. Two changes:
+
+1. **Hours**, so long durations get *shorter* rather than longer: `100m0s` ->
+   `1h40m`, `600m0s` -> `10h0m`.
+2. **`STRIP_ELAPSED_W` 5 -> 6**, which covers the longest pre-hours form
+   (`59m59s`) and every form after it (`1h40m`, `10h0m`, `99h59m`).
+
+### The expanded row vanished when its job finished
+
+Completed and killed rows are expanded-only when the list is collapsed, so a row
+you had expanded dropped out of the visible set the moment it finished:
+
+- the detail block disappeared, mid-read
+- `stripExpandedJob` still pointed at it, so `j`/`k` were still consumed while
+  `x` / `o` did nothing — an expansion that rendered nothing
+
+The expanded row is now **pinned into the visible set regardless of state**, so
+the detail stays while you read it and the row simply goes quiet (dimmed).
+
 ## Environment override
 
 ```sh
@@ -515,7 +545,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.8-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.9-pi15
 ```
 
 ## Rebase onto a newer upstream release

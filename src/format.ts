@@ -11,11 +11,15 @@ export function jobLabel(job: Job): string {
     return job.name ?? job.id;
 }
 
-/** "1m23s" / "45s" / "0s" — short human-readable duration. */
+/** "1m23s" / "45s" / "1h40m" — short human-readable duration. */
 export function formatDuration(ms: number): string {
     const totalSecs = Math.floor(ms / 1000);
-    const mins = Math.floor(totalSecs / 60);
+    const hours = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
     const secs = totalSecs % 60;
+    // Hours keep long durations SHORT: 100m0s -> 1h40m, 600m0s -> 10h0m. Without
+    // this the string keeps growing and gets elided in fixed-width columns.
+    if (hours > 0) return `${hours}h${mins}m`;
     return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
 }
 

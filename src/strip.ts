@@ -80,9 +80,12 @@ const STRIP_MAX_COLS = 4;
  * change how many lines the strip occupies.
  */
 export const DETAIL_TAIL_LINES = 3;
-/** Fixed sub-columns inside a cell, so elapsed time aligns down a column. */
+/** Fixed sub-columns inside a cell, so elapsed time aligns down a column.
+ *  6 covers the longest pre-hours form, `59m59s`; past an hour `formatDuration`
+ *  emits `1h40m` / `10h0m`, which are shorter still. At 5 this elided every job
+ *  over ten minutes that had two-digit seconds — `15m15s` became `15...`. */
 const STRIP_NAME_W = 12;
-const STRIP_ELAPSED_W = 5;
+const STRIP_ELAPSED_W = 6;
 /** Gutter between cells — the padding that separates one column from the next. */
 const STRIP_GAP = 2;
 
@@ -241,11 +244,21 @@ class StripComponent implements StripWidgetComponent {
         if (this.actions.listExpanded() || all.length === 0) return all;
 
         const budget = STRIP_VISIBLE_LINES * cols;
+        const expandedId = this.actions.expandedJobId();
         const pinned = new Set<StripRow>();
         let runningSeen = 0;
 
         for (const row of all) {
             if (row.kind === "toggle") continue;
+            // Keep the EXPANDED row visible whatever its state. Completed and
+            // killed rows are expanded-only when collapsed, so without this the
+            // detail block vanished the moment the job you were watching
+            // finished — leaving
+            // an expansion that renders nothing and consumes j/k.
+            if (row.job.id === expandedId) {
+                pinned.add(row);
+                continue;
+            }
             if (row.state === "stalled" || row.state === "failed") {
                 pinned.add(row);
                 continue;
