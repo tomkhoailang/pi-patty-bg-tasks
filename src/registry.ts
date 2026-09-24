@@ -7,7 +7,7 @@
  */
 
 import { statSync, unlinkSync } from "node:fs";
-import { formatDuration, jobLabel } from "./format.ts";
+import { elapsedMs, formatDuration, jobLabel } from "./format.ts";
 import {
     MAX_CONCURRENT_JOBS,
     PREVIEW_CHARS,
@@ -40,7 +40,7 @@ const DETAIL_TAIL_CHARS = 400;
  */
 function stripDetail(job: Job): string[] {
     const exit = job.exitCode !== undefined ? ` · exit ${job.exitCode}` : "";
-    const meta = `${jobLabel(job)} · ${job.status}${exit} · ${formatDuration(Date.now() - job.startTime)}`;
+    const meta = `${jobLabel(job)} · ${job.status}${exit} · ${formatDuration(elapsedMs(job))}`;
     try {
         const tail = readLogTail(job, DETAIL_TAIL_CHARS)
             .split("\n")
@@ -228,7 +228,7 @@ function jobRow(job: Job, state: StripState): StripRow {
         state,
         name: jobLabel(job),
         detail: (readLastLine(job.logPath) || job.command).slice(0, PREVIEW_CHARS.progress),
-        elapsed: formatDuration(Date.now() - job.startTime),
+        elapsed: formatDuration(elapsedMs(job)),
     };
 }
 
@@ -440,7 +440,7 @@ export function getStats(reg: BackgroundRegistry): JobStats {
 // ─── 내부 헬퍼 ────────────────────────────────────────────────────────────────────────────
 
 function terminalDurationMs(job: Job): number {
-    return Date.now() - job.startTime;
+    return elapsedMs(job);
 }
 
 // ─── 상태 헬퍼 (툴·단축키에서 사용) ───────────────────────────────────────────────────────

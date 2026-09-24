@@ -19,9 +19,22 @@ export function formatDuration(ms: number): string {
     return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
 }
 
+/**
+ * Elapsed wall-clock for a job: live while running, FROZEN once terminal.
+ *
+ * Reads `endedAt` — stamped in `markTerminal`, the single point where a job
+ * becomes terminal — instead of `Date.now()` unconditionally. Computing from
+ * `Date.now()` at the call site made every terminal job keep counting forever;
+ * kills were worst because silent kills never had an `endedAt` at all.
+ */
+export function elapsedMs(job: Job): number {
+    const end = job.status === "running" ? Date.now() : (job.endedAt ?? job.startTime);
+    return Math.max(0, end - job.startTime);
+}
+
 /** Human-readable status pill, including duration for running jobs. */
 export function statusLabel(job: Job, duration?: string): string {
-    const dur = duration ?? formatDuration(Date.now() - job.startTime);
+    const dur = duration ?? formatDuration(elapsedMs(job));
     switch (job.status) {
         case "running":
             if (job.kind === "monitor") return `◉ monitor (${dur})`;
@@ -39,9 +52,7 @@ export function statusLabel(job: Job, duration?: string): string {
 export function formatJobLine(job: Job): string {
     const head = job.name ? `${job.name} (${job.id})` : job.id;
     const duration =
-        job.status === "running"
-            ? ` (${formatDuration(Date.now() - job.startTime)})`
-            : "";
+        job.status === "running" ? ` (${formatDuration(elapsedMs(job))})` : "";
     return `${head}: ${job.command.slice(0, PREVIEW_CHARS.line)} - ${statusLabel(job)}${duration}`;
 }
 

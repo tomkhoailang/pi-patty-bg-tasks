@@ -473,6 +473,36 @@ backgrounded.
 test exercises the module directly rather than through the bash tool, so it keeps
 passing — delete both whenever the dead module becomes annoying.
 
+## Change 5 — elapsed time stops when a job ends
+
+Every duration was computed as `Date.now() - job.startTime` **at the call site**,
+in seven places, so *any* terminal job kept ticking forever — killed, failed and
+completed alike. A killed job was worst: silent kills never queued a completion
+notice, and `endedAt` was only stamped when a notice was queued, so there was no
+finish time to freeze against.
+
+Two changes, at the root rather than per call site:
+
+1. **`markTerminal` stamps `endedAt`.** It is the single point where a job becomes
+   terminal, so every terminal transition now has a finish time regardless of
+   whether a notice follows.
+2. **One shared `elapsedMs(job)`** — live while running, frozen once terminal —
+   replaces all seven open-coded expressions:
+
+```ts
+export function elapsedMs(job: Job): number {
+    const end = job.status === "running" ? Date.now() : (job.endedAt ?? job.startTime);
+    return Math.max(0, end - job.startTime);
+}
+```
+
+`Math.max(0, …)` guards clock skew from going negative, and a terminal job with no
+`endedAt` (a job restored from an older persisted snapshot) degrades to `0s` rather
+than a growing number.
+
+Sites updated: the strip row, the detail block's meta line, `terminalDurationMs`
+used by stats, both `/bg-list` durations, and `statusLabel` / `formatJobLine`.
+
 ## Environment override
 
 ```sh
@@ -485,7 +515,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.7-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.8-pi15
 ```
 
 ## Rebase onto a newer upstream release

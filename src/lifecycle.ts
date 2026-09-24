@@ -132,6 +132,10 @@ export function markTerminal(
     }
     job.status = status;
     job.exitCode = exitCode;
+    // Stamp the finish time HERE — the single point where a job becomes terminal.
+    // It was previously set only when a completion notice was queued, so a silent
+    // kill had no finish time and its elapsed kept counting forever.
+    if (job.endedAt === undefined) job.endedAt = Date.now();
     delete job.proc;
     if (job.resolveDone) {
         job.resolveDone();

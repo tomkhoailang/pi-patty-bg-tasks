@@ -10,7 +10,7 @@
 import type { Job, UiContext } from "./types.ts";
 import { OUTPUT_PREVIEW_CHARS, PREVIEW_CHARS } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
-import { formatDuration, jobLabel } from "./format.ts";
+import { elapsedMs, formatDuration, jobLabel } from "./format.ts";
 import { terminateJobSilently } from "./lifecycle.ts";
 import { forget, readLogTail, renderSidebar } from "./registry.ts";
 
@@ -28,7 +28,7 @@ export async function openBgListPanel(
 
         const items = jobs.map((job) => {
             const icon = statusIcon(job);
-            const dur = formatDuration(Date.now() - job.startTime);
+            const dur = formatDuration(elapsedMs(job));
             const label = job.name ? `${job.name} (${job.id})` : job.id;
             const statusStr = job.status === "running" ? `running (${dur})` : job.status;
             const cmd = job.command.slice(0, PREVIEW_CHARS.taskList);
@@ -86,7 +86,7 @@ async function showJobActions(
 
 async function showOutput(job: Job, ctx: UiContext): Promise<void> {
     const out = readLogTail(job, OUTPUT_PREVIEW_CHARS);
-    const dur = formatDuration(Date.now() - job.startTime);
+    const dur = formatDuration(elapsedMs(job));
     const exitLine = job.exitCode !== undefined ? `\nExit code: ${job.exitCode}` : "";
     await ctx.ui.editor(
         `${statusIcon(job)} ${jobLabel(job)}`,
