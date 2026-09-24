@@ -142,8 +142,15 @@ export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as
 /** Minimal TUI surface the strip needs from the widget factory. */
 export interface StripTui {
     requestRender(): void;
-    /** Release or reassign keyboard focus. `null` returns it to the editor. */
+    /** Release or reassign keyboard focus. */
     setFocus(component: unknown | null): void;
+    /**
+     * Who holds keyboard focus right now. Read BEFORE claiming it, so it can be
+     * handed back on release: `setFocus(null)` leaves nothing focused, and input
+     * dispatch is `if (this.focusedComponent?.handleInput)` — so every keystroke
+     * is dropped until some unrelated path re-focuses the editor.
+     */
+    getFocusedComponent(): unknown | null;
 }
 
 /**

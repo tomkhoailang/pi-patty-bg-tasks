@@ -272,6 +272,43 @@ cell rather than always at column 0. The detail's available width becomes
 | 3 col @ 160 | ~106 | ~51 |
 | 4 col @ 200 | 150 | ~47 |
 
+#### Focus must be handed back, not cleared
+
+`setFocus(null)` does **not** mean "return to the default" — it means *nothing is
+focused*. TUI input dispatch is:
+
+```js
+if (this.focusedComponent?.handleInput) { ... }
+```
+
+so with `focusedComponent === null` every keystroke is **dropped**, and typing
+only resumes when some unrelated Pi path calls `setFocus(this.editor)` again — one
+of ~11 internal call sites. That was the delay before the editor accepted input
+after collapsing.
+
+The component now reads `tui.getFocusedComponent()` **before** claiming focus (Pi
+focuses us only *after* the handler returns) and passes that exact object back to
+`setFocus` on release. `getFocusedComponent()` is public API; `focusedComponent`
+itself is private, so the getter is the supported route.
+
+#### Mouse parity: the hint line is a toolbar
+
+The block's last line is not decoration — each label is a click target:
+
+| Label | Action |
+|---|---|
+| `esc close` | collapse |
+| `j/k next` | advance the expansion |
+| `x kill` | terminate the expanded job |
+| `o modal` | open the modal |
+
+So the expanded block is fully usable by mouse. Clicking any **log line** collapses
+it, making the whole block a large collapse target. Blank space on the toolbar is
+deliberately inert — aiming at a button and missing must not kill anything.
+
+`kill` and `next` route through the same `actions.kill` / `move()` the keys use, so
+the two input methods cannot drift apart.
+
 #### The no-shift invariant
 
 > Given the same jobs, the rendered **line count** and every grid line's **y
@@ -407,7 +444,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.5-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.6-pi15
 ```
 
 ## Rebase onto a newer upstream release

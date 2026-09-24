@@ -91,11 +91,26 @@ type StripJobRow = Extract<StripRow, { kind: "job" }>;
 /** What is on one rendered line. Built once in layout(), read by render + hit. */
 type StripLine =
     | { kind: "grid"; rowIndices: number[]; cellW: number }
-    | { kind: "detail"; lines: string[] }
+    | { kind: "detail"; lines: string[]; hints: DetailHint[] }
     | { kind: "toggle" };
 
+/** Actions reachable from the detail block's hint line — mouse parity for the
+ *  keys, so the block is usable without touching the keyboard. */
+type DetailAction = "collapse" | "next" | "kill" | "modal";
+
+/** A clickable segment on the hint line. `x`/`width` are absolute columns,
+ *  measured after the block's indent. */
+interface DetailHint {
+    action: DetailAction;
+    x: number;
+    width: number;
+}
+
 /** What a click landed on. */
-type StripHit = { kind: "job"; row: StripJobRow } | { kind: "toggle" };
+type StripHit =
+    | { kind: "job"; row: StripJobRow }
+    | { kind: "toggle" }
+    | { kind: "detail"; row: StripJobRow; action: DetailAction };
 
 /** Cells per line for a given width. */
 function columnCount(width: number): number {
@@ -148,6 +163,9 @@ class StripComponent implements StripWidgetComponent {
      *  then opened whichever job had landed on that row index. This mirrors
      *  Pi's SelectList: `press` records the target only, `click` activates. */
     private pressed: StripHit | undefined;
+    /** Who held focus before we claimed it, so it can be handed back on release.
+     *  `setFocus(null)` clears focus entirely rather than restoring it. */
+    private previousFocus: unknown = null;
 
     constructor(getRows: () => StripRow[], theme: StripTheme, actions: StripActions) {
         this.getRows = getRows;
@@ -206,7 +224,8 @@ class StripComponent implements StripWidgetComponent {
                     // hitAt needs the height, and rendering twice would read the
                     // log twice.
                     const indent = (detailAt - i) * gridW;
-                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width, indent) });
+                    const block = this.renderDetail(row.job, width, indent);
+                    lines.push({ kind: "detail", lines: block.lines, hints: block.hints });
                 }
             }
         }
@@ -293,28 +312,45 @@ class StripComponent implements StripWidgetComponent {
      * number of lines as a long one, so navigating between jobs cannot change the
      * strip's height and shift everything below.
      */
-    private renderDetail(job: Job, width: number, indent: number): string[] {
+    private renderDetail(
+        job: Job,
+        width: number,
+        indent: number
+    ): { lines: string[]; hints: DetailHint[] } {
         const pad = " ".repeat(indent);
         const raw = this.actions.detail(job);
-        const out: string[] = [];
+        const lines: string[] = [];
 
-        // meta line + tail lines (the registry returns both), then the hint. The
-        // loop bound must include the meta, or the last tail line is dropped.
+        // meta line + tail lines (the registry returns both), then the toolbar.
+        // The loop bound must include the meta, or the last tail line is dropped.
         for (let i = 0; i < DETAIL_TAIL_LINES + 1; i++) {
             const line = raw[i];
-            out.push(
+            lines.push(
                 line
                     ? truncateToWidth(pad + this.theme.fg("dim", `   ↳ ${line}`), width)
                     : ""
             );
         }
-        out.push(
-            truncateToWidth(
-                pad + this.theme.fg("dim", "     esc close · j/k switch · x kill · o modal"),
-                width
-            )
-        );
-        return out;
+
+        // The hint line doubles as a toolbar: each label is a click target, so
+        // kill / next / modal are reachable by mouse. No extra row is added.
+        const segments: Array<[DetailAction, string]> = [
+            ["collapse", "esc close"],
+            ["next", "j/k next"],
+            ["kill", "x kill"],
+            ["modal", "o modal"],
+        ];
+        const origin = indent + 5;
+        const hints: DetailHint[] = [];
+        let text = "";
+        for (const [index, [action, label]] of segments.entries()) {
+            if (index > 0) text += " · ";
+            hints.push({ action, x: origin + text.length, width: label.length });
+            text += label;
+        }
+        lines.push(truncateToWidth(pad + this.theme.fg("dim", `     ${text}`), width));
+
+        return { lines, hints };
     }
 
     /**
@@ -327,23 +363,42 @@ class StripComponent implements StripWidgetComponent {
     private hitAt(event: StripMouseEvent): StripHit | undefined {
         const { rows, lines } = this.layout(event.width);
 
-        // Walk the map accumulating RENDERED heights. A detail entry occupies
-        // several lines, so `lines[event.y]` directly would be wrong for every y
-        // below one — a click would resolve to the row that happens to sit at
-        // that index in the map rather than the one drawn there.
+        // Walk the map accumulating RENDERED heights and keep the offset INSIDE
+        // the entry. A detail block occupies several lines, so `lines[event.y]`
+        // directly would be wrong for every y below one — a click would resolve
+        // to the row sitting at that map index rather than the one drawn there.
         let acc = 0;
         let line: StripLine | undefined;
+        let offset = 0;
         for (const entry of lines) {
             const height = entry.kind === "detail" ? entry.lines.length : 1;
             if (event.y < acc + height) {
                 line = entry;
+                offset = event.y - acc;
                 break;
             }
             acc += height;
         }
         if (!line) return undefined;
         if (line.kind === "toggle") return { kind: "toggle" };
-        if (line.kind === "detail") return undefined;
+
+        const expandedId = this.actions.expandedJobId();
+        const expanded = rows.find(
+            (row): row is StripJobRow => row.kind === "job" && row.job.id === expandedId
+        );
+
+        if (line.kind === "detail") {
+            if (!expanded) return undefined;
+            // The block's last line is the toolbar; its labels carry actions.
+            if (offset === line.lines.length - 1) {
+                const hint = line.hints.find((h) => event.x >= h.x && event.x < h.x + h.width);
+                // Blank space on the toolbar is inert: aiming at a button and
+                // missing must not kill or collapse anything.
+                return hint ? { kind: "detail", row: expanded, action: hint.action } : undefined;
+            }
+            // Any log line collapses — the whole block is a click target.
+            return { kind: "detail", row: expanded, action: "collapse" };
+        }
 
         const slotInLine = Math.floor(event.x / line.cellW);
         const index = line.rowIndices[slotInLine];
@@ -354,8 +409,7 @@ class StripComponent implements StripWidgetComponent {
 
         // Any click on the row toggles it. There is no name zone: sending the
         // name click to a modal conflicted with a keybinding and stole keyboard
-        // focus, which is what made the expand keys stop responding. The modal
-        // returns later via `o` / Enter only.
+        // focus, which is what made the expand keys stop responding.
         return { kind: "job", row };
     }
 
@@ -383,13 +437,47 @@ class StripComponent implements StripWidgetComponent {
             return { handled: true };
         }
 
-        // Expanding is the keyboard-driven mode, so claim focus with it —
-        // `esc`, `j`/`k` and `x` only reach us while we hold it.
+        if (hit.kind === "detail") {
+            if (hit.action === "collapse") {
+                this.actions.expand(undefined);
+                this.releaseFocus();
+            } else if (hit.action === "next") {
+                this.move(1);
+            } else if (hit.action === "kill") {
+                this.actions.kill(hit.row.job);
+            } else {
+                this.actions.select(hit.row.job);
+            }
+            return { handled: true };
+        }
+
         const current = this.actions.expandedJobId();
         const same = Boolean(current) && current === hit.row.job.id;
-        this.actions.expand(same ? undefined : hit.row.job.id);
-        if (same) this.releaseFocus();
-        return { handled: true, focus: !same };
+        if (same) {
+            this.actions.expand(undefined);
+            this.releaseFocus();
+            return { handled: true };
+        }
+
+        // Read the current holder BEFORE claiming focus: Pi focuses us only after
+        // this handler returns, so this is the component to hand it back to.
+        this.previousFocus = this.readFocus();
+        this.actions.expand(hit.row.job.id);
+        return { handled: true, focus: true };
+    }
+
+    /** Move the expansion by `delta` within the VISIBLE rows, wrapping. Used by
+     *  both `j`/`k` and the toolbar's "next" label, so the two cannot drift. */
+    private move(delta: number): void {
+        const jobs = this.visibleJobRows();
+        if (jobs.length === 0) return;
+        const current = this.actions.expandedJobId();
+        const at = current === undefined ? -1 : jobs.findIndex((row) => row.job.id === current);
+        const next =
+            at < 0
+                ? jobs[delta > 0 ? 0 : jobs.length - 1]
+                : jobs[(at + delta + jobs.length) % jobs.length];
+        if (next) this.actions.expand(next.job.id);
     }
 
     /** Job rows the current width actually shows. `j`/`k` must not reach rows
@@ -418,21 +506,18 @@ class StripComponent implements StripWidgetComponent {
         const jobs = this.visibleJobRows();
         if (jobs.length === 0) return;
 
-        const current = this.actions.expandedJobId();
-        const at = current === undefined ? -1 : jobs.findIndex((row) => row.job.id === current);
-
         if (data === "j" || isKey(data, "down")) {
-            const next = jobs[at < 0 ? 0 : (at + 1) % jobs.length];
-            if (next) this.actions.expand(next.job.id);
+            this.move(1);
             return;
         }
         if (data === "k" || isKey(data, "up")) {
-            const prev = jobs[at <= 0 ? jobs.length - 1 : at - 1];
-            if (prev) this.actions.expand(prev.job.id);
+            this.move(-1);
             return;
         }
 
-        const selected = at >= 0 ? jobs[at] : undefined;
+        const current = this.actions.expandedJobId();
+        const selected =
+            current === undefined ? undefined : jobs.find((row) => row.job.id === current);
         if (!selected) return;
 
         if (data === "x") {
@@ -444,10 +529,24 @@ class StripComponent implements StripWidgetComponent {
         }
     }
 
-    /** Hand keyboard focus back to the editor. */
+    /** Who currently holds focus, or null if unknown. */
+    private readFocus(): unknown {
+        try {
+            return this.tui?.getFocusedComponent() ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** Hand keyboard focus back to whoever held it. */
     private releaseFocus(): void {
         try {
-            this.tui?.setFocus(null);
+            // Restore the PREVIOUS holder. `setFocus(null)` — the earlier
+            // behaviour — leaves nothing focused, and TUI input dispatch is
+            // `if (this.focusedComponent?.handleInput)`, so every keystroke is
+            // dropped until some unrelated path re-focuses the editor. That was
+            // the delay before typing worked again.
+            this.tui?.setFocus(this.previousFocus ?? null);
         } catch {
             /* stale handle — the next install recreates it */
         }
