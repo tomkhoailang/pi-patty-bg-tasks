@@ -8,7 +8,17 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 export const PERSISTED_STATE_SCHEMA_VERSION = 2;
 
 // --- Configuration constants ---
-export const DEFAULT_TIMEOUT_MS = 120_000;
+/**
+ * Auto-background threshold for foreground commands, in milliseconds.
+ *
+ * Override with PI_PATTY_BG_TIMEOUT_MS. Defaults to 15s to match Claude Code's
+ * assistant blocking budget (ASSISTANT_BLOCKING_BUDGET_MS = 15_000), which is the
+ * clock that actually triggers auto-backgrounding upstream. It is NOT the same as
+ * Claude Code's BASH_DEFAULT_TIMEOUT_MS (120_000), which is a separate kill clock.
+ */
+const ENV_TIMEOUT_MS = Number(process.env.PI_PATTY_BG_TIMEOUT_MS);
+export const DEFAULT_TIMEOUT_MS =
+  Number.isFinite(ENV_TIMEOUT_MS) && ENV_TIMEOUT_MS > 0 ? ENV_TIMEOUT_MS : 15_000;
 export const QUICK_COMPLETION_MS = 2_000;
 export const FOREGROUND_TAIL_BYTES = 4_096;
 export const STALL_CHECK_INTERVAL_MS = 5_000;
