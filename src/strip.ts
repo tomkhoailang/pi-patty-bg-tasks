@@ -87,7 +87,7 @@ type StripJobRow = Extract<StripRow, { kind: "job" }>;
 
 /** What is on one rendered line. Built once in layout(), read by render + hit. */
 type StripLine =
-    | { kind: "grid"; rowIndices: number[] }
+    | { kind: "grid"; rowIndices: number[]; cellW: number }
     | { kind: "detail"; lines: string[] }
     | { kind: "toggle" };
 
@@ -166,46 +166,49 @@ class StripComponent implements StripWidgetComponent {
     private layout(width: number): {
         rows: StripRow[];
         cols: number;
-        cellW: number;
         lines: StripLine[];
         toggleText: string | undefined;
     } {
         const all = this.getRows();
-        const expandedId = this.actions.expandedJobId();
-
-        // Truthiness, not `!== undefined`: a falsy "no expansion" value must not
-        // force single-column mode. (The field is typed string|undefined, but
-        // callers using null would silently collapse the whole grid.)
-        const hasExpansion = Boolean(expandedId);
-
-        // While a row is expanded the grid is forced to ONE column. With two or
-        // more, a row shares its line with others, so the detail block would be
-        // drawn under whichever cell happened to be leftmost and would appear to
-        // belong to the wrong job. One column puts the expanded row on its own
-        // line, which is the only way "directly under the clicked row" is
-        // well defined.
-        const cols = hasExpansion ? 1 : columnCount(width);
-        const cellW = Math.max(1, Math.floor(width / cols));
+        const cols = columnCount(width);
+        const gridW = Math.max(1, Math.floor(width / cols));
         const rows = this.budgetedRows(all, cols);
 
+        const expandedId = this.actions.expandedJobId();
+        // Truthiness, not `!== undefined`: a falsy "no expansion" value must not
+        // change the layout. (The field is typed string|undefined, but callers
+        // using null would silently reflow the grid.)
+        const hasExpansion = Boolean(expandedId);
         const detailAt = hasExpansion
             ? rows.findIndex((row) => row.kind === "job" && row.job.id === expandedId)
             : -1;
 
+        // The expanded row LEAVES the grid and takes a full-width line of its
+        // own. Forcing the whole strip to one column anchored the detail but
+        // reflowed every other row, which is a bigger visual jolt than the
+        // problem it solved. Breaking out only that row keeps the grid stable
+        // AND puts the detail unambiguously beneath its own row.
         const lines: StripLine[] = [];
-        for (let i = 0; i < rows.length; i += cols) {
-            const rowIndices: number[] = [];
-            for (let c = 0; c < cols && i + c < rows.length; c++) rowIndices.push(i + c);
-            lines.push({ kind: "grid", rowIndices });
-            if (detailAt >= 0 && Math.floor(detailAt / cols) === Math.floor(i / cols)) {
-                const row = rows[detailAt];
-                if (row && row.kind === "job") {
-                    // Render the block here, once: hitAt needs its height, and
-                    // rendering it twice would read the log twice.
-                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
-                }
+        let pending: number[] = [];
+        const flush = () => {
+            if (pending.length > 0) {
+                lines.push({ kind: "grid", rowIndices: pending, cellW: gridW });
+                pending = [];
             }
+        };
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (i === detailAt && row && row.kind === "job") {
+                flush();
+                lines.push({ kind: "grid", rowIndices: [i], cellW: width });
+                lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
+                continue;
+            }
+            pending.push(i);
+            if (pending.length === cols) flush();
         }
+        flush();
 
         let toggleText: string | undefined;
         if (!this.actions.listExpanded()) {
@@ -216,7 +219,7 @@ class StripComponent implements StripWidgetComponent {
         }
         if (toggleText) lines.push({ kind: "toggle" });
 
-        return { rows, cols, cellW, lines, toggleText };
+        return { rows, cols, lines, toggleText };
     }
 
     /** Apply the line budget to the full row list. */
@@ -241,8 +244,7 @@ class StripComponent implements StripWidgetComponent {
     }
 
     render(width: number): string[] {
-        const { rows, lines, cellW, toggleText } = this.layout(width);
-        const contentW = Math.max(1, cellW - STRIP_GAP);
+        const { rows, lines, toggleText } = this.layout(width);
 
         const out: string[] = [];
         for (const line of lines) {
@@ -254,19 +256,24 @@ class StripComponent implements StripWidgetComponent {
                 out.push(...line.lines);
                 continue;
             }
+            const contentW = Math.max(1, line.cellW - STRIP_GAP);
             let text = "";
             for (const index of line.rowIndices) {
-                text += padTo(this.renderJob(rows[index] as StripJobRow, contentW), cellW);
+                text += padTo(this.renderJob(rows[index] as StripJobRow, contentW), line.cellW);
             }
             out.push(text.replace(/ +$/, ""));
         }
         return out;
     }
 
-    /** One cell: coloured glyph + name, elapsed, then detail (truncated last). */
+    /** One cell: glyph + name, elapsed, then detail (truncated last). */
     private renderJob(row: StripJobRow, contentW: number): string {
         const { glyph, slot } = STATE_STYLE[row.state];
-        const head = this.theme.fg(slot, glyph);
+        // The expanded row shows a down-chevron: the same left-chevron for both
+        // states gave no visual cue that the row was open, so re-clicking to
+        // collapse was undiscoverable.
+        const marker = this.actions.expandedJobId() === row.job.id ? "▼" : glyph;
+        const head = this.theme.fg(slot, marker);
         const bodyPlain = `${fit(row.name, STRIP_NAME_W)} ${fit(row.elapsed, STRIP_ELAPSED_W)} ${row.detail}`;
         const body = QUIET_STATES.has(row.state)
             ? this.theme.fg("dim", bodyPlain)
@@ -301,7 +308,7 @@ class StripComponent implements StripWidgetComponent {
      * never disagree with what was drawn.
      */
     private hitAt(event: StripMouseEvent): StripHit | undefined {
-        const { rows, lines, cellW } = this.layout(event.width);
+        const { rows, lines } = this.layout(event.width);
 
         // Walk the map accumulating RENDERED heights. A detail entry occupies
         // several lines, so `lines[event.y]` directly would be wrong for every y
@@ -321,7 +328,10 @@ class StripComponent implements StripWidgetComponent {
         if (line.kind === "toggle") return { kind: "toggle" };
         if (line.kind === "detail") return undefined;
 
-        const slotInLine = Math.floor(event.x / cellW);
+        // Each grid line carries its own cell width: the expanded row occupies a
+        // full-width line while every other line stays in the grid, so a single
+        // width for the whole strip would mis-map one of them.
+        const slotInLine = Math.floor(event.x / line.cellW);
         const index = line.rowIndices[slotInLine];
         if (index === undefined) return undefined;
 
@@ -330,7 +340,7 @@ class StripComponent implements StripWidgetComponent {
 
         // Within the cell, the glyph occupies the first columns and the name
         // begins after them. Clicking the glyph expands; the name opens modal.
-        const inCell = event.x - slotInLine * cellW;
+        const inCell = event.x - slotInLine * line.cellW;
         return { kind: "job", row, zone: inCell < STRIP_GLYPH_W ? "glyph" : "name" };
     }
 

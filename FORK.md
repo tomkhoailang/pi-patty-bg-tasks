@@ -224,15 +224,33 @@ whole list, never under the clicked row. Drawing the detail inside the strip is
 the only way to put it where the user clicked.
 
 With multiple columns there is no "below the clicked row" — the row shares a line
-with others — so the grid is forced to **one column while a row is expanded**.
-Every row then gets its own line and the detail sits directly beneath its own row.
+with others. The first attempt forced the **whole strip** to one column while a
+row was expanded. That anchored the detail correctly but reflowed every other row,
+which is a bigger visual jolt than the problem it solved.
 
-Without that, the detail was drawn under whichever cell happened to be leftmost:
-expanding the *second* column appeared to change only the **content** of a block
-still sitting under the first column. That is a placement problem with no good
-grid answer — either force one column, indent the block to the cell (cramped for
-right-hand columns), or tag it with the job name. The meta line leads with the job
-name as well, as belt and braces.
+The expanded row now **leaves the grid** and takes a full-width line of its own,
+with the detail beneath it; every other row keeps its columns:
+
+```
+ ▶ alpha      5s   tick 0
+ ▼ bravo      5s   tick 1          ← own full-width line
+    ↳ bravo · running · 5s
+    ↳ bravo tick 4
+      esc close · j/k switch · x kill · o modal
+ ▶ charlie    5s   tick 2      ▶ delta   5s   tick 3
+```
+
+Because the layout is now mixed, each grid line carries **its own cell width** —
+a single width for the strip would mis-map either the full-width line or the
+grid lines. `hitAt()` reads that per-line width.
+
+Without the break-out, the detail was drawn under whichever cell happened to be
+leftmost: expanding the *second* column appeared to change only the **content** of
+a block still sitting under the first.
+
+The expanded row also shows a **down-chevron (`▼`)** in place of the
+left-chevron. Re-clicking collapses it, but with an identical glyph for both
+states that was undiscoverable — there was no cue that the row was open.
 
 A detail block occupies **several rendered lines**, so the line map stores its
 rendered lines rather than a row index, and `hitAt()` walks the map **accumulating
@@ -325,7 +343,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.1-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.2-pi15
 ```
 
 ## Rebase onto a newer upstream release
