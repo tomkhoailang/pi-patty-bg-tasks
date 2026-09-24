@@ -134,6 +134,21 @@ messaged the agent and cancelled, persisting nothing. It now also invokes an
 a real state to render instead of a log-mtime heuristic that would false-positive
 on any legitimately quiet build.
 
+### Mouse click contract
+
+Pi delivers **both** a `press` and a `click` for one physical click. Handling each
+independently fired the action twice, and the second pass read the row list *after*
+the first pass had mutated it — so clicking `▾ +N more` expanded **and** opened
+whichever job had landed on that row index. `handleMouse` now mirrors Pi's
+`SelectList`: `press` records the row index, `click` activates using it.
+
+### Collapse count
+
+The toggle counts what expansion *would* reveal, not merely what is hidden at that
+instant. The `quiet` (completed/killed) rows are empty while collapsed, so
+comparing against the rendered row count alone reported "nothing hidden" and left
+those jobs with no affordance to reach them.
+
 ```sh
 PI_PATTY_STRIP_LIMIT=5 pi    # show 5 rows before collapsing
 ```
@@ -150,7 +165,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.0-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.1-pi15
 ```
 
 ## Rebase onto a newer upstream release

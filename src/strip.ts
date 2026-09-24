@@ -61,6 +61,14 @@ class StripComponent implements StripWidgetComponent {
     private readonly theme: StripTheme;
     private readonly onSelect: (job: Job) => void;
     private readonly onToggle: () => void;
+    /** Row index captured on press, consumed on click.
+     *
+     *  Pi delivers BOTH a `press` and a `click` for one physical click. Acting
+     *  on each fired the action twice, and the second pass read the row list
+     *  AFTER the first pass had mutated it — so clicking "+N more" expanded and
+     *  then opened whichever job had landed on that row index. This mirrors
+     *  Pi's SelectList: `press` records position only, `click` activates. */
+    private pressedIndex: number | undefined;
 
     constructor(
         getRows: () => StripRow[],
@@ -95,7 +103,15 @@ class StripComponent implements StripWidgetComponent {
         if (event.button !== "left") return undefined;
         if (event.type !== "press" && event.type !== "click") return undefined;
 
-        const row = this.getRows()[event.y];
+        if (event.type === "press") {
+            this.pressedIndex = event.y;
+            return { handled: true };
+        }
+
+        // click = activation, at the press position when we have one.
+        const y = this.pressedIndex ?? event.y;
+        this.pressedIndex = undefined;
+        const row = this.getRows()[y];
         if (!row) return undefined;
 
         if (row.kind === "toggle") this.onToggle();

@@ -220,21 +220,26 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
         .slice(0, STRIP_VISIBLE_LIMIT)
         .map((job) => jobRow(job, "failed"));
 
+    const quietPool = jobs
+        .filter((job) => job.status === "completed" || job.status === "killed")
+        .sort(byFinishDesc)
+        .slice(0, STRIP_VISIBLE_LIMIT);
+
     const quiet = reg.stripExpanded
-        ? jobs
-              .filter((job) => job.status === "completed" || job.status === "killed")
-              .sort(byFinishDesc)
-              .slice(0, STRIP_VISIBLE_LIMIT)
-              .map((job) => jobRow(job, job.status as StripState))
+        ? quietPool.map((job) => jobRow(job, job.status as StripState))
         : [];
 
     const visibleRunning = reg.stripExpanded ? running : running.slice(0, STRIP_VISIBLE_LIMIT);
     const rows = [...visibleRunning, ...failed, ...quiet];
-    const total = running.length + failed.length + quiet.length;
 
-    if (!reg.stripExpanded && total > rows.length) {
-        rows.push({ kind: "toggle", text: `▾ +${total - rows.length} more` });
-    } else if (reg.stripExpanded && total > STRIP_VISIBLE_LIMIT) {
+    // Count what expansion WOULD reveal, not merely what is hidden right now:
+    // `quiet` is empty while collapsed, so comparing against rows.length alone
+    // reported "nothing hidden" and left killed/completed jobs unreachable.
+    const reachable = running.length + failed.length + quietPool.length;
+
+    if (!reg.stripExpanded && reachable > rows.length) {
+        rows.push({ kind: "toggle", text: `▾ +${reachable - rows.length} more` });
+    } else if (reg.stripExpanded && reachable > STRIP_VISIBLE_LIMIT) {
         rows.push({ kind: "toggle", text: "▴ collapse" });
     }
 
