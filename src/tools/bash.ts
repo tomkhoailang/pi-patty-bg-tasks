@@ -28,7 +28,6 @@ import {
 } from "../types.ts";
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
 import { streamLog } from "../output.ts";
-import { showBackgroundHint, clearBackgroundHint } from "../hint.ts";
 import {
     add,
     createRunningJob,
@@ -228,7 +227,6 @@ async function runForeground(args: {
     (timeoutTimer as NodeJS.Timeout).unref();
 
     let progressPoller: { stop: () => void } | undefined;
-    let hintShown = false;
 
     const cleanup = () => {
         progressPoller?.stop();
@@ -262,11 +260,8 @@ async function runForeground(args: {
             return finishForeground(quickResult.code);
         }
 
-        // Still running past the quick window — start progress polling and show
-        // the "(ctrl+b to run in background)" hint, like Claude Code.
+        // Still running past the quick window — start progress polling.
         progressPoller = streamLog(logPath, onUpdate);
-        showBackgroundHint(ctx);
-        hintShown = true;
 
         // Race: completion vs backgrounding.
         const race = await Promise.race<
@@ -298,7 +293,6 @@ async function runForeground(args: {
     } finally {
         // Single teardown for every exit path (return, throw, background hand-off).
         cleanup();
-        if (hintShown) clearBackgroundHint(ctx);
         reg.foreground.delete(toolCallId);
         if (reg.activeToolCallId === toolCallId) reg.activeToolCallId = null;
         if (!handedToBackground) {

@@ -380,6 +380,21 @@ those jobs with no affordance to reach them.
 PI_PATTY_STRIP_LINES=5 pi    # allow 5 lines before collapsing
 ```
 
+## Change 4 — the ctrl+b hint is removed
+
+`tools/bash.ts` no longer shows the `(ctrl+b to run in background)` widget while a
+foreground command runs. The shortcut itself still works — only the on-screen
+advertisement is gone.
+
+Consequence worth knowing: nothing now advertises that `ctrl+b` exists. Find it
+via `/hotkeys` or these docs. The progress poller still runs, so there is still
+feedback that a command is in flight; what is lost is the cue that it *can* be
+backgrounded.
+
+`hint.ts` and `src/__tests__/hint.test.ts` are left in place but unreferenced. The
+test exercises the module directly rather than through the bash tool, so it keeps
+passing — delete both whenever the dead module becomes annoying.
+
 ## Environment override
 
 ```sh
@@ -392,7 +407,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.4-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.5-pi15
 ```
 
 ## Rebase onto a newer upstream release
