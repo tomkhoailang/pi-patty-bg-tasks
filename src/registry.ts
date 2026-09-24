@@ -14,10 +14,12 @@ import {
     RECENT_TERMINAL_KEEP,
     type Job,
     type JobKind,
+    type StripRow,
     type UiContext,
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
+import { createStripWidget, openStripPanel } from "./strip.ts";
 
 // --- ID generation -------------------------------------------------------
 
@@ -177,43 +179,91 @@ function deleteLogFile(logPath: string): number {
  * widget isn't redrawn on a timer otherwise). Re-renders only when the content
  * actually changes. Call after any state change that affects running jobs.
  */
-export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
-    const pills: string[] = [];
-    let runningCount = 0;
-
+/** Build one clickable strip row per running job. */
+function buildStripRows(reg: BackgroundRegistry): StripRow[] {
+    const rows: StripRow[] = [];
     for (const job of reg.jobs.values()) {
         if (job.status !== "running") continue;
-        runningCount++;
         const duration = formatDuration(Date.now() - job.startTime);
         const glyph = job.kind === "monitor" ? "◉" : "▶";
         // Show the job's latest output line as live progress; fall back to the
-        // command until there's any output. Re-read each tick by the ticker.
+        // command until there's any output. Re-read on every render.
         const progress = readLastLine(job.logPath) || job.command;
-        pills.push(
-            `${glyph} ${jobLabel(job)}: ${progress.slice(0, PREVIEW_CHARS.progress)} (${duration})`
-        );
+        rows.push({
+            job,
+            text: `${glyph} ${jobLabel(job)}: ${progress.slice(0, PREVIEW_CHARS.progress)} (${duration})`,
+        });
     }
+    return rows;
+}
 
-    if (pills.length === 0) {
+/**
+ * Render the pill-bar widget and aggregate status-bar text, and keep a 1 Hz
+ * ticker running while any job is alive so the durations stay live.
+ *
+ * The widget uses setWidget's COMPONENT overload rather than `string[]`: the
+ * string form is capped at 10 lines and cannot receive mouse events. Pi keeps
+ * the component instance, so it is installed once and later updates go through
+ * `requestRender()` — the component reads live state at render time.
+ * Non-TUI modes (and any context that does not report `mode: "tui"`) keep the
+ * original string path, which is what Pi's own examples guard on.
+ */
+export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
+    const rows = buildStripRows(reg);
+    const runningCount = rows.length;
+    const isTui = ctx.mode === "tui";
+
+    if (runningCount === 0) {
         stopSidebarTicker(reg);
-        if (reg.lastSidebarContent !== undefined) {
+        if (reg.stripInstalled || reg.lastSidebarContent !== undefined || reg.lastStatusText !== undefined) {
+            reg.stripInstalled = false;
+            reg.stripTui = undefined;
             reg.lastSidebarContent = undefined;
+            reg.lastStatusText = undefined;
             ctx.ui.setWidget("background-jobs", undefined);
             ctx.ui.setStatus("background-jobs", undefined);
         }
         return;
     }
 
+    if (isTui) {
+        if (!reg.stripInstalled) {
+            reg.stripInstalled = true;
+            ctx.ui.setWidget(
+                "background-jobs",
+                createStripWidget(
+                    () => buildStripRows(reg),
+                    ctx.ui.theme,
+                    (job) => { void openStripPanel(job, ctx); },
+                    (handle) => { reg.stripTui = handle; }
+                )
+            );
+        }
+    } else {
+        const key = rows.map((row) => row.text).join("\n");
+        if (key !== reg.lastSidebarContent) {
+            reg.lastSidebarContent = key;
+            ctx.ui.setWidget("background-jobs", rows.map((row) => row.text));
+        }
+    }
+
     const parts = [`${runningCount} running`];
     if (reg.completedCount > 0) parts.push(`${reg.completedCount} done`);
     if (reg.failedCount > 0) parts.push(`${reg.failedCount} failed`);
     const statusText = `▶ ${parts.join(", ")}`;
-    const key = `${pills.join("\n")}|${statusText}`;
 
-    if (key !== reg.lastSidebarContent) {
-        reg.lastSidebarContent = key;
-        ctx.ui.setWidget("background-jobs", pills);
+    if (statusText !== reg.lastStatusText) {
+        reg.lastStatusText = statusText;
         ctx.ui.setStatus("background-jobs", ctx.ui.theme.fg("accent", statusText));
+    }
+
+    try {
+        reg.stripTui?.requestRender();
+    } catch {
+        // TUI handle went stale (session reload/switch) — drop it and let the
+        // next install recreate the widget.
+        reg.stripTui = undefined;
+        reg.stripInstalled = false;
     }
 
     ensureSidebarTicker(reg, ctx);

@@ -15,7 +15,7 @@ MIT licensed. All credit for the extension belongs upstream.
 Upstream publishes **no git tags**, so this fork's pin is the commit SHA above plus
 its own local tag (see below).
 
-## The only functional change
+## Change 1 — auto-background threshold (15s)
 
 `src/types.ts` — the auto-background threshold:
 
@@ -44,8 +44,43 @@ Upstream's own changelog reads: *"Default auto-background timeout is now 120s
 **(was 15s)**, matching Claude Code."* Reverting to 15s restores patty's original
 behavior and matches the clock that actually matters.
 
-Non-functional changes: `package.json` version → `1.1.6-pi15`, a README fork notice,
+Non-functional changes: `package.json` version → `1.2.0-pi15`, a README fork notice,
 and this file.
+
+## Change 2 — clickable strip widget (milestone 0)
+
+The pill bar above the editor used `setWidget(key, string[])`. Pi's string form is
+capped at `MAX_WIDGET_LINES = 10` (past that it renders `... (widget truncated)`)
+and, being plain text, **cannot receive mouse events**. Pi's `setWidget` has a
+second overload taking a component factory — no cap, and it supports
+`handleMouse`.
+
+| File | Change |
+|---|---|
+| `src/strip.ts` *(new)* | `StripComponent`, `createStripWidget()`, `openStripPanel()` |
+| `src/types.ts` | `UiContext.setWidget` widened to the factory overload; adds `custom()`, `mode`, and the `Strip*` types |
+| `src/state.ts` | `stripInstalled`, `stripTui`, `lastStatusText` |
+| `src/registry.ts` | `renderSidebar` installs the component widget once; the ticker drives `requestRender()` |
+
+Hit-testing follows Pi's own `SelectList`: `TuiMouseEvent.y` is component-local
+and zero-based, so row N is simply `rows[event.y]`. Events that are not a left
+press/click on an occupied row return `undefined` rather than `{ handled: true }`,
+so Pi keeps its fallbacks — primary-button drags stay available for transcript
+selection, and wheel events still scroll.
+
+Two constraints worth remembering:
+
+- **The update model inverts.** A string widget is replaced every tick; a
+  component is created once by the factory and Pi keeps that instance. Live
+  updates therefore go through `requestRender()`, and the component reads
+  registry state at render time rather than receiving new strings.
+- **Non-TUI contexts keep the string path.** The component path is gated on
+  `ctx.mode === "tui"`, which is Pi's own guard for `ctx.ui.custom()`.
+- Classes here use plain field declarations, not constructor parameter
+  properties, so the module loads under a strip-only TS transform too.
+
+Milestone 0 scope: clicking a row opens an intentionally empty panel, proving the
+click path end-to-end. Tray rows, live tail, and actions come next.
 
 ## Environment override
 
@@ -59,7 +94,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.1.6-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.2.0-pi15
 ```
 
 ## Rebase onto a newer upstream release

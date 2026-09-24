@@ -4,7 +4,7 @@
  * One instance per session, threaded through every tool and helper.
  */
 
-import type { Job, ForegroundSlot, MonitorEnd } from "./types.ts";
+import type { Job, ForegroundSlot, MonitorEnd, StripTui } from "./types.ts";
 
 export class BackgroundRegistry {
     jobs = new Map<string, Job>();
@@ -26,8 +26,15 @@ export class BackgroundRegistry {
 
     /** Live-duration ticker for the sidebar pills; runs while jobs are alive. */
     sidebarTimer: NodeJS.Timeout | undefined = undefined;
-    /** Last rendered sidebar content — used to skip redundant widget updates. */
+    /** Last rendered status-bar text — used to skip redundant setStatus calls. */
     lastSidebarContent: string | undefined = undefined;
+    /** Last status-line text, tracked separately for the non-component widget path. */
+    lastStatusText: string | undefined = undefined;
+    /** True while the clickable strip component is installed as the widget.
+     *  The component path installs once; updates go through requestRender(). */
+    stripInstalled = false;
+    /** TUI handle captured from the widget factory — drives strip re-renders. */
+    stripTui: StripTui | undefined = undefined;
 
     /** Finished jobs + monitor terminals awaiting a coalesced notice (notify.ts).
      *  Buffered so a whole turn's worth of finishes surfaces as one summary, not

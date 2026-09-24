@@ -2,10 +2,12 @@
 
 > **Fork notice.** Personal fork of
 > [patty-io/pi-patty-bg-tasks](https://github.com/patty-io/pi-patty-bg-tasks) (MIT),
-> pinned to the upstream `v1.1.6` release commit (`6676db5`). The only functional
-> change is the auto-background threshold: **15s** instead of 120s, overridable via
-> `PI_PATTY_BG_TIMEOUT_MS`. See [FORK.md](FORK.md) for the exact diff and the
-> rebase procedure. All credit for the extension belongs upstream.
+> pinned to the upstream `v1.1.6` release commit (`6676db5`). Two changes:
+> (1) the auto-background threshold defaults to **15s** instead of 120s,
+> overridable via `PI_PATTY_BG_TIMEOUT_MS`; (2) the pill bar above the editor is a
+> **clickable component** rather than a capped `string[]` widget. See
+> [FORK.md](FORK.md) for the exact diffs and the rebase procedure. All credit for
+> the extension belongs upstream.
 
 <p align="center">
   <strong>English</strong> · <a href="README.ko.md">한국어</a> · <a href="README.zh.md">中文</a>

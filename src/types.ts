@@ -134,19 +134,81 @@ export const DELIVER_STEER = { deliverAs: "steer", triggerTurn: true } as const;
  *  takes just `{ deliverAs: "followUp" }`. */
 export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as const;
 
+// --- Clickable strip widget (setWidget component overload) ---
+
+/** Minimal TUI surface the strip needs from the widget factory. */
+export interface StripTui {
+    requestRender(): void;
+}
+
+/** Theme slice used for strip styling. */
+export interface StripTheme {
+    fg(colour: string, text: string): string;
+}
+
+/**
+ * Normalized mouse event (structural subset of pi-tui's `TuiMouseEvent`).
+ * `y` is zero-based and **local to the receiving component**.
+ */
+export interface StripMouseEvent {
+    type: string;
+    button: string;
+    x: number;
+    y: number;
+    wheelDelta?: number;
+    clickCount?: number;
+}
+
+export interface StripMouseResult {
+    handled?: boolean;
+    render?: boolean;
+}
+
+/** One clickable line in the strip. */
+export interface StripRow {
+    job: Job;
+    text: string;
+}
+
+/** A widget component: renders lines, optionally handles pointer events. */
+export interface StripWidgetComponent {
+    render(width: number): string[];
+    handleMouse?(event: StripMouseEvent): StripMouseResult | undefined;
+    invalidate(): void;
+    dispose?(): void;
+}
+
 // --- UI context ---
 export interface UiContext {
+    /** Run mode. Guard terminal-only UI on "tui". */
+    mode?: string;
     ui: {
         notify(message: string, level?: "info" | "warning" | "error"): void;
+        /**
+         * Pass `string[]` for plain text (capped at 10 lines, no pointer
+         * support) or a factory for a live component (no cap, mouse events).
+         */
         setWidget(
             name: string,
-            content: string[] | undefined,
+            content:
+                | string[]
+                | ((tui: StripTui, theme: StripTheme) => StripWidgetComponent)
+                | undefined,
             options?: { placement?: "aboveEditor" | "belowEditor" }
         ): void;
         setStatus(name: string, content: unknown): void;
-        theme: { fg(colour: string, text: string): string };
+        theme: StripTheme;
         select(title: string, options: string[]): Promise<string | undefined>;
         editor(title: string, content: string): Promise<string | undefined>;
+        /** Show a custom component with keyboard focus. Absent outside TUI mode. */
+        custom?<T>(
+            factory: (
+                tui: unknown,
+                theme: StripTheme,
+                keybindings: unknown,
+                done: (result: T) => void
+            ) => StripWidgetComponent
+        ): Promise<T>;
     };
 }
 
