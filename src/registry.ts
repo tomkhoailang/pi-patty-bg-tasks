@@ -33,16 +33,25 @@ const DETAIL_LINES = 3;
 
 /**
  * Detail shown under the expanded row: a meta line plus recent output. Bounded
- * so the block cannot grow and push the rest of the strip around.
+ * so the block cannot grow and push the rest of the strip around, and the job
+ * name leads the meta line so the block is attributable even if it is ever drawn
+ * at full width rather than under its own row.
+ *
+ * Never throws: this runs inside render(), so a vanishing log file (job killed,
+ * log swept) must degrade to a note rather than take the whole strip down.
  */
 function stripDetail(job: Job): string[] {
     const exit = job.exitCode !== undefined ? ` · exit ${job.exitCode}` : "";
-    const meta = `${job.status}${exit} · ${formatDuration(Date.now() - job.startTime)}`;
-    const tail = readLogTail(job, DETAIL_TAIL_CHARS)
-        .split("\n")
-        .map((line) => line.trimEnd())
-        .filter((line) => line.length > 0);
-    return [meta, ...tail.slice(-DETAIL_LINES)];
+    const meta = `${jobLabel(job)} · ${job.status}${exit} · ${formatDuration(Date.now() - job.startTime)}`;
+    try {
+        const tail = readLogTail(job, DETAIL_TAIL_CHARS)
+            .split("\n")
+            .map((line) => line.trimEnd())
+            .filter((line) => line.length > 0);
+        return [meta, ...tail.slice(-DETAIL_LINES)];
+    } catch {
+        return [meta, "(log unavailable)"];
+    }
 }
 
 /** Ask the widget to repaint. A stale handle means the next install recreates it. */

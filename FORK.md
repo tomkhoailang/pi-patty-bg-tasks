@@ -224,13 +224,26 @@ whole list, never under the clicked row. Drawing the detail inside the strip is
 the only way to put it where the user clicked.
 
 With multiple columns there is no "below the clicked row" — the row shares a line
-with others — so the detail goes below the **grid line** containing it, spanning
-the full width. At a single column that is identical to "below the row".
+with others — so the grid is forced to **one column while a row is expanded**.
+Every row then gets its own line and the detail sits directly beneath its own row.
+
+Without that, the detail was drawn under whichever cell happened to be leftmost:
+expanding the *second* column appeared to change only the **content** of a block
+still sitting under the first column. That is a placement problem with no good
+grid answer — either force one column, indent the block to the cell (cramped for
+right-hand columns), or tag it with the job name. The meta line leads with the job
+name as well, as belt and braces.
+
+A detail block occupies **several rendered lines**, so the line map stores its
+rendered lines rather than a row index, and `hitAt()` walks the map **accumulating
+rendered heights**. Indexing `lines[event.y]` directly is wrong for every `y`
+below a detail block — a click resolves to whatever happens to sit at that map
+index rather than what was drawn there. Covering *every* rendered line in the test
+(not hand-picked indices) is what catches this class.
 
 This also forced `layout()` to grow into a real line map (`grid` / `detail` /
-`toggle`) rather than a flat row list, because the detail block shifts every grid
-line beneath it. The hit-test walks that same map, so a click can never land on a
-row that moved.
+`toggle`) rather than a flat row list. The hit-test walks that same map, so a
+click can never land on a row that moved.
 
 ### Keyboard requires focus
 
@@ -312,7 +325,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.0-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.1-pi15
 ```
 
 ## Rebase onto a newer upstream release

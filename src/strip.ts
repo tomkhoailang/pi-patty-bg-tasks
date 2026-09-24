@@ -88,7 +88,7 @@ type StripJobRow = Extract<StripRow, { kind: "job" }>;
 /** What is on one rendered line. Built once in layout(), read by render + hit. */
 type StripLine =
     | { kind: "grid"; rowIndices: number[] }
-    | { kind: "detail"; rowIndex: number }
+    | { kind: "detail"; lines: string[] }
     | { kind: "toggle" };
 
 /** What a click landed on. */
@@ -166,18 +166,31 @@ class StripComponent implements StripWidgetComponent {
     private layout(width: number): {
         rows: StripRow[];
         cols: number;
+        cellW: number;
         lines: StripLine[];
         toggleText: string | undefined;
     } {
         const all = this.getRows();
-        const rows = this.budgetedRows(all, width);
-        const cols = columnCount(width);
-
         const expandedId = this.actions.expandedJobId();
-        const detailAt =
-            expandedId === undefined
-                ? -1
-                : rows.findIndex((row) => row.kind === "job" && row.job.id === expandedId);
+
+        // Truthiness, not `!== undefined`: a falsy "no expansion" value must not
+        // force single-column mode. (The field is typed string|undefined, but
+        // callers using null would silently collapse the whole grid.)
+        const hasExpansion = Boolean(expandedId);
+
+        // While a row is expanded the grid is forced to ONE column. With two or
+        // more, a row shares its line with others, so the detail block would be
+        // drawn under whichever cell happened to be leftmost and would appear to
+        // belong to the wrong job. One column puts the expanded row on its own
+        // line, which is the only way "directly under the clicked row" is
+        // well defined.
+        const cols = hasExpansion ? 1 : columnCount(width);
+        const cellW = Math.max(1, Math.floor(width / cols));
+        const rows = this.budgetedRows(all, cols);
+
+        const detailAt = hasExpansion
+            ? rows.findIndex((row) => row.kind === "job" && row.job.id === expandedId)
+            : -1;
 
         const lines: StripLine[] = [];
         for (let i = 0; i < rows.length; i += cols) {
@@ -185,7 +198,12 @@ class StripComponent implements StripWidgetComponent {
             for (let c = 0; c < cols && i + c < rows.length; c++) rowIndices.push(i + c);
             lines.push({ kind: "grid", rowIndices });
             if (detailAt >= 0 && Math.floor(detailAt / cols) === Math.floor(i / cols)) {
-                lines.push({ kind: "detail", rowIndex: detailAt });
+                const row = rows[detailAt];
+                if (row && row.kind === "job") {
+                    // Render the block here, once: hitAt needs its height, and
+                    // rendering it twice would read the log twice.
+                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
+                }
             }
         }
 
@@ -198,14 +216,14 @@ class StripComponent implements StripWidgetComponent {
         }
         if (toggleText) lines.push({ kind: "toggle" });
 
-        return { rows, cols, lines, toggleText };
+        return { rows, cols, cellW, lines, toggleText };
     }
 
     /** Apply the line budget to the full row list. */
-    private budgetedRows(all: StripRow[], width: number): StripRow[] {
+    private budgetedRows(all: StripRow[], cols: number): StripRow[] {
         if (this.actions.listExpanded() || all.length === 0) return all;
 
-        const budget = STRIP_VISIBLE_LINES * columnCount(width);
+        const budget = STRIP_VISIBLE_LINES * cols;
         const pinned = new Set<StripRow>();
         let runningSeen = 0;
 
@@ -223,9 +241,8 @@ class StripComponent implements StripWidgetComponent {
     }
 
     render(width: number): string[] {
-        const { rows, cols, lines, toggleText } = this.layout(width);
-        const cw = cellWidth(width);
-        const contentW = Math.max(1, cw - STRIP_GAP);
+        const { rows, lines, cellW, toggleText } = this.layout(width);
+        const contentW = Math.max(1, cellW - STRIP_GAP);
 
         const out: string[] = [];
         for (const line of lines) {
@@ -234,13 +251,12 @@ class StripComponent implements StripWidgetComponent {
                 continue;
             }
             if (line.kind === "detail") {
-                const row = rows[line.rowIndex];
-                if (row && row.kind === "job") out.push(...this.renderDetail(row.job, width));
+                out.push(...line.lines);
                 continue;
             }
             let text = "";
             for (const index of line.rowIndices) {
-                text += padTo(this.renderJob(rows[index] as StripJobRow, contentW), cw);
+                text += padTo(this.renderJob(rows[index] as StripJobRow, contentW), cellW);
             }
             out.push(text.replace(/ +$/, ""));
         }
@@ -285,14 +301,27 @@ class StripComponent implements StripWidgetComponent {
      * never disagree with what was drawn.
      */
     private hitAt(event: StripMouseEvent): StripHit | undefined {
-        const { rows, cols, lines } = this.layout(event.width);
-        const line = lines[event.y];
+        const { rows, lines, cellW } = this.layout(event.width);
+
+        // Walk the map accumulating RENDERED heights. A detail entry occupies
+        // several lines, so `lines[event.y]` directly would be wrong for every y
+        // below one — a click would resolve to the row that happens to sit at
+        // that index in the map rather than the one drawn there.
+        let acc = 0;
+        let line: StripLine | undefined;
+        for (const entry of lines) {
+            const height = entry.kind === "detail" ? entry.lines.length : 1;
+            if (event.y < acc + height) {
+                line = entry;
+                break;
+            }
+            acc += height;
+        }
         if (!line) return undefined;
         if (line.kind === "toggle") return { kind: "toggle" };
         if (line.kind === "detail") return undefined;
 
-        const cw = cellWidth(event.width);
-        const slotInLine = Math.floor(event.x / cw);
+        const slotInLine = Math.floor(event.x / cellW);
         const index = line.rowIndices[slotInLine];
         if (index === undefined) return undefined;
 
@@ -301,7 +330,7 @@ class StripComponent implements StripWidgetComponent {
 
         // Within the cell, the glyph occupies the first columns and the name
         // begins after them. Clicking the glyph expands; the name opens modal.
-        const inCell = event.x - slotInLine * cw;
+        const inCell = event.x - slotInLine * cellW;
         return { kind: "job", row, zone: inCell < STRIP_GLYPH_W ? "glyph" : "name" };
     }
 
@@ -332,7 +361,7 @@ class StripComponent implements StripWidgetComponent {
         if (hit.zone === "glyph") {
             // Expanding is the keyboard-driven mode, so claim focus with it —
             // `esc`, `j`/`k` and `x` only reach us while we hold it.
-            const same = this.actions.expandedJobId() === hit.row.job.id;
+            const same = Boolean(this.actions.expandedJobId()) && this.actions.expandedJobId() === hit.row.job.id;
             this.actions.expand(same ? undefined : hit.row.job.id);
             if (same) this.releaseFocus();
             return { handled: true, focus: !same };
