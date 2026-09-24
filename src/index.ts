@@ -124,6 +124,18 @@ export default function (pi: ExtensionAPI): void {
         }
 
         void cleanupStaleRuntimeArtifacts();
+
+        // Expand-mode keys arrive here rather than through component focus. An
+        // input listener runs BEFORE the focused-component dispatch and can
+        // consume, so the editor keeps keyboard focus throughout and typing can
+        // never stall waiting for something to re-focus it.
+        (ctx as unknown as UiContext).ui.onTerminalInput?.((data) => {
+            try {
+                return reg.stripKeyHandler?.(data) ? { consume: true } : undefined;
+            } catch {
+                return undefined;
+            }
+        });
     });
 
     // ── Session shutdown ──────────────────────────────────────────

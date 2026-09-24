@@ -272,26 +272,67 @@ cell rather than always at column 0. The detail's available width becomes
 | 3 col @ 160 | ~106 | ~51 |
 | 4 col @ 200 | 150 | ~47 |
 
-#### Focus must be handed back, not cleared
+#### Expand keys use an input listener, NOT component focus
 
-`setFocus(null)` does **not** mean "return to the default" — it means *nothing is
-focused*. TUI input dispatch is:
+The widget never takes keyboard focus. Keys arrive through
+`ctx.ui.onTerminalInput`, which runs **before** the focused-component dispatch and
+can swallow input:
 
 ```js
-if (this.focusedComponent?.handleInput) { ... }
+// tui.js — listeners run first
+for (const listener of this.inputListeners) {
+    const result = listener(current);
+    if (result?.consume) return;
+}
 ```
 
-so with `focusedComponent === null` every keystroke is **dropped**, and typing
-only resumes when some unrelated Pi path calls `setFocus(this.editor)` again — one
-of ~11 internal call sites. That was the delay before the editor accepted input
-after collapsing.
+Two earlier attempts used focus and both failed:
 
-The component now reads `tui.getFocusedComponent()` **before** claiming focus (Pi
-focuses us only *after* the handler returns) and passes that exact object back to
-`setFocus` on release. `getFocusedComponent()` is public API; `focusedComponent`
-itself is private, so the getter is the supported route.
+1. **Claim focus, release with `setFocus(null)`.** `null` does *not* mean "return
+   to the default" — it means **nothing is focused**, and the dispatch above is
+   `if (this.focusedComponent?.handleInput)`, so every keystroke was dropped until
+   some unrelated Pi path re-focused the editor (~11 internal call sites). The
+   editor appeared to "take a while" to accept input again.
+2. **Read `getFocusedComponent()` before claiming, pass it back on release.**
+   Correct in principle and the shipped code did exactly that — but focus still
+   ended up on the strip in practice, so `j`/`k` kept navigating after a collapse.
 
-#### Mouse parity: the hint line is a toolbar
+The listener removes the dependency entirely: the editor keeps focus throughout,
+so there is nothing to restore and nothing to get wrong.
+
+**Keys are deliberately narrow**, because the editor is live while expanded:
+
+| Key | Action |
+|---|---|
+| `esc` / `q` | collapse |
+| `j` / `k` | next / previous job |
+| `x` | kill |
+| `o` | modal |
+
+Arrows are **not** bound — they move the editor cursor. Enter is **not** bound — it
+submits the editor. Both were fine under the focus model (the editor got nothing
+at all) and are collateral damage once it keeps focus. Everything not in the table
+passes straight through, and with no row expanded the handler returns `false` for
+every key, so the listener can never swallow input outside expand mode.
+
+#### `jobs list` reads terminal jobs from the registry
+
+`listAction` previously took running jobs from `reg.jobs` but terminal jobs from
+`reg.recentTerminal`.
+
+`recentTerminal` has exactly **one** writer — `forget()` — and killing a job goes
+through `terminateJobSilently`, which calls `terminateJob` + `markKilledSilently` +
+`abortJob` and **never `forget()`**. A killed job was therefore not running (first
+filter missed it) and not in `recentTerminal` (second filter missed it), so it was
+invisible to `jobs list` while the strip drew its `⊘` row and `jobs stats` counted
+it.
+
+Observed live: a killed job vanished from the list, counted as `Killed: 1`, and
+still rendered in the strip.
+
+Both halves now read `reg.jobs`, so the tool and the strip agree.
+
+### Mouse parity: the hint line is a toolbar
 
 The block's last line is not decoration — each label is a click target:
 
@@ -444,7 +485,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.6-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.7-pi15
 ```
 
 ## Rebase onto a newer upstream release

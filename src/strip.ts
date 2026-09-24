@@ -143,16 +143,13 @@ function isKey(data: string, key: string): boolean {
 }
 
 class StripComponent implements StripWidgetComponent {
-    /** Implements Focusable. Set by Pi when keyboard focus changes. */
-    focused = false;
-
     // Plain fields, not constructor parameter properties: Pi loads extensions
     // through a TS transform whose feature support we do not control here.
     private readonly getRows: () => StripRow[];
     private readonly theme: StripTheme;
     private readonly actions: StripActions;
     private tui: StripTui | undefined;
-    /** Width of the most recent render. handleInput() receives no width, and
+    /** Width of the most recent render. handleKey() receives no width, and
      *  `j`/`k` must navigate the VISIBLE rows, which depend on it. */
     private lastWidth = 0;
     /** Target captured on press, consumed on click.
@@ -163,9 +160,6 @@ class StripComponent implements StripWidgetComponent {
      *  then opened whichever job had landed on that row index. This mirrors
      *  Pi's SelectList: `press` records the target only, `click` activates. */
     private pressed: StripHit | undefined;
-    /** Who held focus before we claimed it, so it can be handed back on release.
-     *  `setFocus(null)` clears focus entirely rather than restoring it. */
-    private previousFocus: unknown = null;
 
     constructor(getRows: () => StripRow[], theme: StripTheme, actions: StripActions) {
         this.getRows = getRows;
@@ -440,7 +434,6 @@ class StripComponent implements StripWidgetComponent {
         if (hit.kind === "detail") {
             if (hit.action === "collapse") {
                 this.actions.expand(undefined);
-                this.releaseFocus();
             } else if (hit.action === "next") {
                 this.move(1);
             } else if (hit.action === "kill") {
@@ -455,15 +448,11 @@ class StripComponent implements StripWidgetComponent {
         const same = Boolean(current) && current === hit.row.job.id;
         if (same) {
             this.actions.expand(undefined);
-            this.releaseFocus();
             return { handled: true };
         }
 
-        // Read the current holder BEFORE claiming focus: Pi focuses us only after
-        // this handler returns, so this is the component to hand it back to.
-        this.previousFocus = this.readFocus();
         this.actions.expand(hit.row.job.id);
-        return { handled: true, focus: true };
+        return { handled: true };
     }
 
     /** Move the expansion by `delta` within the VISIBLE rows, wrapping. Used by
@@ -491,65 +480,64 @@ class StripComponent implements StripWidgetComponent {
     }
 
     /**
-     * Keys, live only while focused. `esc` is checked with matchesKey rather
-     * than a raw "\u001b" compare — a bare ESC is the prefix byte of every
-     * escape sequence and is reported differently under the Kitty protocol,
-     * which is why a raw compare silently never matched.
+     * Expand-mode keys. Returns true when the key was ours and must be swallowed.
+     *
+     * Delivered through `ctx.ui.onTerminalInput` rather than component focus.
+     * Focus was the wrong mechanism: `setFocus(null)` leaves NOTHING focused and
+     * TUI input dispatch is `if (this.focusedComponent?.handleInput)`, so handing
+     * focus back after a collapse was unreliable and the editor could sit dead
+     * until some unrelated path re-focused it. An input listener runs BEFORE the
+     * focus dispatch and can `consume`, so the editor keeps focus throughout and
+     * there is nothing to restore.
+     *
+     * `esc` uses matchesKey, never a raw "\u001b" compare: a bare ESC is the
+     * prefix byte of every escape sequence and is reported differently under the
+     * Kitty protocol, so a raw compare silently never matches.
+     *
+     * Only our own keys are swallowed — everything else still reaches the editor.
      */
-    handleInput(data: string): void {
+    handleKey(data: string): boolean {
+        // Nothing expanded: every key belongs to the editor. Without this guard
+        // the listener — registered for the whole session — would swallow `q` and
+        // Escape even with no row open, permanently breaking normal typing.
+        if (!this.actions.expandedJobId()) return false;
+
         if (isKey(data, "escape") || data === "q") {
             this.actions.expand(undefined);
-            this.releaseFocus();
-            return;
+            return true;
         }
 
         const jobs = this.visibleJobRows();
-        if (jobs.length === 0) return;
+        if (jobs.length === 0) return false;
 
-        if (data === "j" || isKey(data, "down")) {
+        // Only j/k for navigation, NOT the arrow keys: the editor keeps focus in
+        // this design, so stealing arrows would break cursor movement. The
+        // toolbar advertises "j/k next", so nothing is hidden.
+        if (data === "j") {
             this.move(1);
-            return;
+            return true;
         }
-        if (data === "k" || isKey(data, "up")) {
+        if (data === "k") {
             this.move(-1);
-            return;
+            return true;
         }
 
         const current = this.actions.expandedJobId();
         const selected =
             current === undefined ? undefined : jobs.find((row) => row.job.id === current);
-        if (!selected) return;
+        if (!selected) return false;
 
         if (data === "x") {
             this.actions.kill(selected.job);
-            return;
+            return true;
         }
-        if (data === "o" || isKey(data, "enter")) {
+        // `o` only, NOT Enter: Enter submits the editor, and swallowing it would
+        // make the prompt unusable whenever a row happened to be expanded.
+        if (data === "o") {
             this.actions.select(selected.job);
+            return true;
         }
-    }
-
-    /** Who currently holds focus, or null if unknown. */
-    private readFocus(): unknown {
-        try {
-            return this.tui?.getFocusedComponent() ?? null;
-        } catch {
-            return null;
-        }
-    }
-
-    /** Hand keyboard focus back to whoever held it. */
-    private releaseFocus(): void {
-        try {
-            // Restore the PREVIOUS holder. `setFocus(null)` — the earlier
-            // behaviour — leaves nothing focused, and TUI input dispatch is
-            // `if (this.focusedComponent?.handleInput)`, so every keystroke is
-            // dropped until some unrelated path re-focuses the editor. That was
-            // the delay before typing worked again.
-            this.tui?.setFocus(this.previousFocus ?? null);
-        } catch {
-            /* stale handle — the next install recreates it */
-        }
+        return false;
     }
 
     invalidate(): void {
@@ -563,18 +551,22 @@ class StripComponent implements StripWidgetComponent {
  * @param getRows  Live row supplier, read on every render.
  * @param theme    Pi theme, used for semantic slot colours.
  * @param actions  Callbacks for expand / select / kill / list toggle.
+ * @param onKeys   Receives this component's key handler, so the caller can route
+ *                 terminal input to it WITHOUT taking keyboard focus.
  * @param onHandle Receives the TUI handle so the caller can request renders.
  */
 export function createStripWidget(
     getRows: () => StripRow[],
     theme: StripTheme,
     actions: StripActions,
+    onKeys: (handler: (data: string) => boolean) => void,
     onHandle: (tui: StripTui) => void
 ): (tui: StripTui, theme: StripTheme) => StripWidgetComponent {
     return (tui: StripTui, factoryTheme: StripTheme) => {
         onHandle(tui);
         const component = new StripComponent(getRows, factoryTheme ?? theme, actions);
         component.setTui(tui);
+        onKeys((data) => component.handleKey(data));
         return component;
     };
 }

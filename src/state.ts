@@ -41,6 +41,9 @@ export class BackgroundRegistry {
     stripExpanded = false;
     /** Job id whose row is expanded inline in the strip, if any. */
     stripExpandedJob: string | undefined = undefined;
+    /** Key handler published by the strip widget. Expand-mode keys are routed to
+     *  it through ctx.ui.onTerminalInput, so the editor never loses focus. */
+    stripKeyHandler: ((data: string) => boolean) | undefined = undefined;
     /** Injected from index.ts. registry.ts cannot import lifecycle.ts (which
      *  imports registry.ts), so the strip's `x` kill routes through here. */
     killJob: ((job: Job) => void) | undefined = undefined;

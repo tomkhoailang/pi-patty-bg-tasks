@@ -142,15 +142,6 @@ export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as
 /** Minimal TUI surface the strip needs from the widget factory. */
 export interface StripTui {
     requestRender(): void;
-    /** Release or reassign keyboard focus. */
-    setFocus(component: unknown | null): void;
-    /**
-     * Who holds keyboard focus right now. Read BEFORE claiming it, so it can be
-     * handed back on release: `setFocus(null)` leaves nothing focused, and input
-     * dispatch is `if (this.focusedComponent?.handleInput)` — so every keystroke
-     * is dropped until some unrelated path re-focuses the editor.
-     */
-    getFocusedComponent(): unknown | null;
 }
 
 /**
@@ -221,14 +212,10 @@ export type StripRow =
       }
     | { kind: "toggle"; text: string };
 
-/** A widget component: renders lines, optionally handles pointer + key input. */
+/** A widget component: renders lines, optionally handles pointer input. */
 export interface StripWidgetComponent {
     render(width: number): string[];
     handleMouse?(event: StripMouseEvent): StripMouseResult | undefined;
-    /** Called only while the component holds focus. */
-    handleInput?(data: string): void;
-    /** Set by Pi when focus changes (implements Focusable). */
-    focused?: boolean;
     invalidate(): void;
     dispose?(): void;
 }
@@ -264,6 +251,14 @@ export interface UiContext {
                 done: (result: T) => void
             ) => StripWidgetComponent
         ): Promise<T>;
+        /**
+         * Raw terminal input, delivered BEFORE the focused-component dispatch and
+         * able to swallow it. Expand-mode keys use this instead of component
+         * focus, so the editor never loses focus and there is nothing to restore.
+         */
+        onTerminalInput?(
+            handler: (data: string) => { consume?: boolean; data?: string } | undefined
+        ): () => void;
     };
 }
 

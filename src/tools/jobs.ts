@@ -115,13 +115,21 @@ export function registerJobsTool(
 // ─── list: 모든 잡 나열 ──────────────────────────────────────────────────────────────────────
 
 function listAction(reg: BackgroundRegistry): AgentToolResult<undefined> {
-    const running = Array.from(reg.jobs.values()).filter(
-        (j) => j.status === "running"
-    );
-    const recent = reg.recentTerminal.slice(-5).reverse();
+    const all = Array.from(reg.jobs.values());
+    const running = all.filter((j) => j.status === "running");
+    // Terminal jobs are read from the registry, NOT from recentTerminal.
+    // Killing a job goes through terminateJobSilently, which never calls
+    // forget() — and forget() is the only writer of recentTerminal. A killed job
+    // therefore fell through BOTH halves of this list: not running, so the first
+    // filter missed it, and absent from recentTerminal, so the second did too,
+    // while the strip still drew its row and jobs stats still counted it.
+    const terminal = all
+        .filter((j) => j.status !== "running")
+        .sort((a, b) => (b.endedAt ?? b.startTime) - (a.endedAt ?? a.startTime))
+        .slice(0, 5);
     const lines = [
         ...running.map((j) => formatJobLine(j)),
-        ...recent.map((j) => formatJobLine(j)),
+        ...terminal.map((j) => formatJobLine(j)),
     ];
     return {
         content: [

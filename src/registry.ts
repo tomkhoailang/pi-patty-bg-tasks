@@ -335,6 +335,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                         listExpanded: () => reg.stripExpanded,
                         detail: stripDetail,
                     },
+                    (handler) => { reg.stripKeyHandler = handler; },
                     (handle) => { reg.stripTui = handle; }
                 )
             );
