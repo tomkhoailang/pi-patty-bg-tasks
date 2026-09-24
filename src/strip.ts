@@ -74,6 +74,12 @@ const LOUD_STATES: ReadonlySet<StripState> = new Set(["stalled", "failed"]);
 const STRIP_MIN_CELL = 44;
 /** Ceiling on columns, so an ultrawide terminal does not shred the row. */
 const STRIP_MAX_COLS = 4;
+/**
+ * Log lines in the inline detail block. The block's height is FIXED at this
+ * plus a meta line and a key-hint line, so navigating between jobs can never
+ * change how many lines the strip occupies.
+ */
+export const DETAIL_TAIL_LINES = 3;
 /** Fixed sub-columns inside a cell, so elapsed time aligns down a column. */
 const STRIP_NAME_W = 12;
 const STRIP_ELAPSED_W = 5;
@@ -131,6 +137,9 @@ class StripComponent implements StripWidgetComponent {
     private readonly theme: StripTheme;
     private readonly actions: StripActions;
     private tui: StripTui | undefined;
+    /** Width of the most recent render. handleInput() receives no width, and
+     *  `j`/`k` must navigate the VISIBLE rows, which depend on it. */
+    private lastWidth = 0;
     /** Target captured on press, consumed on click.
      *
      *  Pi delivers BOTH a `press` and a `click` for one physical click. Acting
@@ -193,9 +202,11 @@ class StripComponent implements StripWidgetComponent {
             if (detailAt >= 0 && Math.floor(detailAt / cols) === Math.floor(i / cols)) {
                 const row = rows[detailAt];
                 if (row && row.kind === "job") {
-                    // Rendered here, once: hitAt needs the height, and rendering
-                    // it twice would read the log twice.
-                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width) });
+                    // Indent to the expanded cell's column, and render here once:
+                    // hitAt needs the height, and rendering twice would read the
+                    // log twice.
+                    const indent = (detailAt - i) * gridW;
+                    lines.push({ kind: "detail", lines: this.renderDetail(row.job, width, indent) });
                 }
             }
         }
@@ -235,6 +246,7 @@ class StripComponent implements StripWidgetComponent {
 
     render(width: number): string[] {
         const { rows, lines, toggleText } = this.layout(width);
+        this.lastWidth = width;
 
         const out: string[] = [];
         for (const line of lines) {
@@ -275,15 +287,30 @@ class StripComponent implements StripWidgetComponent {
 
     /**
      * The inline block under the expanded row: bounded log tail, then the key
-     * hint. The hint is last so the log reads first, and the block is small
-     * enough that it cannot be pushed off.
+     * hint, indented to the expanded cell's column.
+     *
+     * Height is FIXED. A short log (or a failed `detail()` call) pads to the same
+     * number of lines as a long one, so navigating between jobs cannot change the
+     * strip's height and shift everything below.
      */
-    private renderDetail(job: Job, width: number): string[] {
-        const lines = this.actions.detail(job);
-        const out = lines.map((line) => truncateToWidth(this.theme.fg("dim", `   ↳ ${line}`), width));
+    private renderDetail(job: Job, width: number, indent: number): string[] {
+        const pad = " ".repeat(indent);
+        const raw = this.actions.detail(job);
+        const out: string[] = [];
+
+        // meta line + tail lines (the registry returns both), then the hint. The
+        // loop bound must include the meta, or the last tail line is dropped.
+        for (let i = 0; i < DETAIL_TAIL_LINES + 1; i++) {
+            const line = raw[i];
+            out.push(
+                line
+                    ? truncateToWidth(pad + this.theme.fg("dim", `   ↳ ${line}`), width)
+                    : ""
+            );
+        }
         out.push(
             truncateToWidth(
-                this.theme.fg("dim", "     esc close · j/k switch · x kill · o modal"),
+                pad + this.theme.fg("dim", "     esc close · j/k switch · x kill · o modal"),
                 width
             )
         );
@@ -365,6 +392,16 @@ class StripComponent implements StripWidgetComponent {
         return { handled: true, focus: !same };
     }
 
+    /** Job rows the current width actually shows. `j`/`k` must not reach rows
+     *  hidden behind the toggle: expanding one would render no detail block and
+     *  the strip would lose its lines. */
+    private visibleJobRows(): StripJobRow[] {
+        const cols = columnCount(this.lastWidth);
+        return this.budgetedRows(this.getRows(), cols).filter(
+            (row): row is StripJobRow => row.kind === "job"
+        );
+    }
+
     /**
      * Keys, live only while focused. `esc` is checked with matchesKey rather
      * than a raw "\u001b" compare — a bare ESC is the prefix byte of every
@@ -378,7 +415,7 @@ class StripComponent implements StripWidgetComponent {
             return;
         }
 
-        const jobs = this.getRows().filter((row): row is StripJobRow => row.kind === "job");
+        const jobs = this.visibleJobRows();
         if (jobs.length === 0) return;
 
         const current = this.actions.expandedJobId();

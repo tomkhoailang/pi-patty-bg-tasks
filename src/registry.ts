@@ -20,7 +20,7 @@ import {
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
-import { STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.ts";
+import { DETAIL_TAIL_LINES, STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.ts";
 
 /** Upper bound on the completed/killed pool the strip may draw from. Only
  *  reached when expanded — it exists so a long session cannot accumulate an
@@ -28,8 +28,6 @@ import { STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.
 const STRIP_POOL_MAX = 20;
 /** Bytes of log tail read for the inline detail block. */
 const DETAIL_TAIL_CHARS = 400;
-/** Log lines kept in that block (plus a meta line and the key hint). */
-const DETAIL_LINES = 3;
 
 /**
  * Detail shown under the expanded row: a meta line plus recent output. Bounded
@@ -48,7 +46,7 @@ function stripDetail(job: Job): string[] {
             .split("\n")
             .map((line) => line.trimEnd())
             .filter((line) => line.length > 0);
-        return [meta, ...tail.slice(-DETAIL_LINES)];
+        return [meta, ...tail.slice(-DETAIL_TAIL_LINES)];
     } catch {
         return [meta, "(log unavailable)"];
     }

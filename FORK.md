@@ -254,10 +254,52 @@ The expanded row shows a **down-chevron (`▼`)** in place of the left-chevron.
 Re-clicking collapses it, but with an identical glyph for both states that was
 undiscoverable.
 
-**There is no name zone.** A click anywhere on a row toggles it. Routing the name
+There is **no name zone**. A click anywhere on a row toggles it. Routing the name
 click to a modal conflicted with a keybinding and **stole keyboard focus**, which
 is what made the expand keys stop responding. The modal returns later via `o` /
 Enter only.
+
+#### The detail is indented to its cell
+
+The block is indented by `slotInLine × cellWidth`, so it sits under the expanded
+cell rather than always at column 0. The detail's available width becomes
+`width - indent`, which in practice lands around 47-57 usable columns because
+`cellWidth` is already 50-60:
+
+| layout | indent, last column | detail width |
+|---|---|---|
+| 2 col @ 120 | 60 | ~57 |
+| 3 col @ 160 | ~106 | ~51 |
+| 4 col @ 200 | 150 | ~47 |
+
+#### The no-shift invariant
+
+> Given the same jobs, the rendered **line count** and every grid line's **y
+> position** are identical regardless of *which* row is expanded. Only the
+> detail's **x indent** varies.
+
+Four mechanisms hold it. Two were broken before this change:
+
+1. **The block is FIXED HEIGHT** — `DETAIL_TAIL_LINES + 2` (meta + tail + hint, 5
+   lines). `stripDetail` returns as little as one line for a fresh or failed job,
+   so without padding, navigating from a chatty job to a quiet one shrank the
+   block and shifted everything below. The component pads **and** truncates, so
+   the height holds even when `detail()` returns nothing or throws.
+2. **`j`/`k` walk VISIBLE rows only.** They used the full row list, so enough
+   presses expanded a row hidden behind `▾ +N more` — which renders no detail
+   and silently removed five lines. `handleInput` has no width, so the component
+   caches the last render width and budgets against it.
+3. **Every detail line is truncated, never wrapped** — a wrapped line would add a
+   rendered line.
+4. **Only the indent varies.**
+
+The detail's **y** does follow its grid *line*, so rows on line 1 place the block
+one line lower than rows on line 0. That is inherent and correct; the invariant is
+that nothing varies *within* a line.
+
+Tested by rendering once per visible row expanded and asserting line count, grid
+geometry and block height are invariant — systematic over hand-picked cases, the
+same shape that caught the line-map bug.
 
 A detail block occupies **several rendered lines**, so the line map stores its
 rendered lines rather than a row index, and `hitAt()` walks the map **accumulating
@@ -350,7 +392,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.3-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.4-pi15
 ```
 
 ## Rebase onto a newer upstream release
