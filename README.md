@@ -5,7 +5,8 @@
 > pinned to the upstream `v1.1.6` release commit (`6676db5`). Two changes:
 > (1) the auto-background threshold defaults to **15s** instead of 120s,
 > overridable via `PI_PATTY_BG_TIMEOUT_MS`; (2) the pill bar above the editor is a
-> **clickable component** rather than a capped `string[]` widget. See
+> **clickable component** rather than a capped `string[]` widget; (3) those rows
+> carry **status colours** on Pi's theme slots, with a configurable collapse. See
 > [FORK.md](FORK.md) for the exact diffs and the rebase procedure. All credit for
 > the extension belongs upstream.
 

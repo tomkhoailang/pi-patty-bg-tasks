@@ -38,6 +38,9 @@ export function watchStalls(args: {
     disablePromptStall?: boolean;
     /** Skip the oversize auto-kill (used for persistent monitors). */
     disableOversizeKill?: boolean;
+    /** Called once when the interactive-prompt stall heuristic fires, so callers
+     *  can persist the state for the UI (the warning message is one-shot). */
+    onStall?: () => void;
 }): () => void {
     let lastSize = 0;
     let lastGrowth = Date.now();
@@ -85,6 +88,7 @@ export function watchStalls(args: {
                     const tail = buf.toString("utf-8", 0, toRead);
                     if (looksLikePrompt(tail)) {
                         cancelled = true;
+                        args.onStall?.();
                         sendStallPrompt(args.pi, args.jobId, args.command, args.logPath, tail);
                         return;
                     }

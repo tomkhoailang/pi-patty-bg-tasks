@@ -79,6 +79,9 @@ export interface Job {
     resolveDone?: () => void;
     outputConsumed?: boolean;
     isBackgrounded: boolean;
+    /** Set by the stall watcher when output stopped growing and the tail looks
+     *  like an interactive prompt. Read by the strip to show a warning state. */
+    stalled?: boolean;
     /** Defaults to "shell" when absent (back-compat with persisted jobs). */
     kind?: JobKind;
     /** Transient teardown hook (follower + ws socket). Never persisted. */
@@ -164,11 +167,29 @@ export interface StripMouseResult {
     render?: boolean;
 }
 
+/**
+ * Visual state for a strip row. Distinct from JobStatus because `stalled`
+ * refines `running`, and because the strip deliberately renders terminal jobs
+ * (failures) alongside live ones.
+ */
+export type StripState =
+    | "running"
+    | "stalled"
+    | "completed"
+    | "failed"
+    | "killed";
+
 /** One clickable line in the strip. */
-export interface StripRow {
-    job: Job;
-    text: string;
-}
+export type StripRow =
+    | {
+          kind: "job";
+          job: Job;
+          state: StripState;
+          name: string;
+          detail: string;
+          elapsed: string;
+      }
+    | { kind: "toggle"; text: string };
 
 /** A widget component: renders lines, optionally handles pointer events. */
 export interface StripWidgetComponent {

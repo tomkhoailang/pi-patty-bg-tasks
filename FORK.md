@@ -44,8 +44,8 @@ Upstream's own changelog reads: *"Default auto-background timeout is now 120s
 **(was 15s)**, matching Claude Code."* Reverting to 15s restores patty's original
 behavior and matches the clock that actually matters.
 
-Non-functional changes: `package.json` version → `1.2.0-pi15`, a README fork notice,
-and this file.
+Non-functional changes: the `package.json` version and peer list, a README fork
+notice, and this file.
 
 ## Change 2 — clickable strip widget (milestone 0)
 
@@ -80,7 +80,63 @@ Two constraints worth remembering:
   properties, so the module loads under a strip-only TS transform too.
 
 Milestone 0 scope: clicking a row opens an intentionally empty panel, proving the
-click path end-to-end. Tray rows, live tail, and actions come next.
+click path end-to-end. See Change 3 for the visual layer on top.
+
+## Change 3 — status colours, attention policy, collapse
+
+### Colour
+
+Pi theme slots, so the strip follows the active theme rather than hard-coding:
+
+| State | Glyph | Slot |
+|---|---|---|
+| running | `▶` | `accent` |
+| running, stalled | `▶` | `warning` |
+| completed | `✓` | `success` |
+| failed | `✗` | `error` |
+| killed | `⊘` | `muted` |
+
+`killed` gets its own glyph and slot. Upstream `statusIcon()` maps both `failed`
+and `killed` to `✗`, so a job you deliberately stopped was indistinguishable from
+one that broke. And `warning` is reserved for the stall watcher's verdict rather
+than a kill: pure yellow is the loudest slot Pi ships and should mean "something
+is wrong", not "you pressed Ctrl+X".
+
+Rows now contain ANSI, so `render()` uses `truncateToWidth` from
+`@earendil-works/pi-tui` instead of code-point slicing — the previous approach was
+only safe because rows were plain text. That adds the package's first non-core
+import, declared in `peerDependencies`.
+
+### Which jobs the strip shows
+
+Upstream rendered running jobs only, which is why `error` and `success` had
+nowhere to appear. The policy is now:
+
+- running fills the visible budget first
+- **failures ride below the running rows and are never displaced by the limit** —
+  an unacknowledged failure is an outstanding decision, not stale history
+- completed / killed are **expanded-only** and dimmed (you just stopped it, or it
+  already succeeded)
+- a toggle line appears only when something is actually hidden
+
+### Collapse
+
+`STRIP_VISIBLE_LIMIT` (default **3**, override with `PI_PATTY_STRIP_LIMIT`,
+clamped to 20) bounds the collapsed view. Clicking `▾ +N more` expands; `▴ collapse`
+returns. The component overload has **no `MAX_WIDGET_LINES` guard**, so this limit
+is the only bound on strip height — do not remove it without another.
+
+### Stall state
+
+`monitoring.ts` already detected stalled jobs, but the verdict was one-shot: it
+messaged the agent and cancelled, persisting nothing. It now also invokes an
+`onStall` callback and `lifecycle.ts` sets `job.stalled = true`, giving the strip
+a real state to render instead of a log-mtime heuristic that would false-positive
+on any legitimately quiet build.
+
+```sh
+PI_PATTY_STRIP_LIMIT=5 pi    # show 5 rows before collapsing
+```
 
 ## Environment override
 
@@ -94,7 +150,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.2.0-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.0-pi15
 ```
 
 ## Rebase onto a newer upstream release

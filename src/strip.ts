@@ -13,14 +13,19 @@
  *   - a primary-button drag stays available for transcript selection
  *   - wheel events still scroll the transcript
  * Only a left press/click on an occupied row is claimed.
+ *
+ * Styling uses Pi's semantic theme slots, so the strip follows the active theme
+ * rather than hard-coded colours. `truncateToWidth` (not code-point slicing) is
+ * required because rows now contain ANSI sequences.
  */
 
-import { jobLabel } from "./format.ts";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import type {
     Job,
     StripMouseEvent,
     StripMouseResult,
     StripRow,
+    StripState,
     StripTheme,
     StripTui,
     StripWidgetComponent,
@@ -28,30 +33,59 @@ import type {
 } from "./types.ts";
 
 /**
- * Width-safe truncation. Rows are rendered as plain text (no ANSI), matching
- * the previous `string[]` widget's appearance and keeping this safe to slice by
- * code point — a coloured string could be cut mid-escape-sequence.
+ * How many rows the strip shows before collapsing behind a "+N more" line.
+ * Override with PI_PATTY_STRIP_LIMIT. Clamped to a sane range: 0 or garbage
+ * falls back to 3, and anything above 20 is capped so the strip cannot eat the
+ * viewport (the component overload has no MAX_WIDGET_LINES guard).
  */
-function truncate(text: string, width: number): string {
-    const chars = [...text];
-    if (chars.length <= width) return text;
-    if (width <= 1) return chars.slice(0, Math.max(0, width)).join("");
-    return chars.slice(0, width - 1).join("") + "…";
-}
+const ENV_LIMIT = Number(process.env.PI_PATTY_STRIP_LIMIT);
+export const STRIP_VISIBLE_LIMIT =
+    Number.isFinite(ENV_LIMIT) && ENV_LIMIT > 0 ? Math.min(Math.floor(ENV_LIMIT), 20) : 3;
+
+/** State → glyph + Pi theme slot. */
+const STATE_STYLE: Record<StripState, { glyph: string; slot: string }> = {
+    running: { glyph: "▶", slot: "accent" },
+    stalled: { glyph: "▶", slot: "warning" },
+    completed: { glyph: "✓", slot: "success" },
+    failed: { glyph: "✗", slot: "error" },
+    killed: { glyph: "⊘", slot: "muted" },
+};
+
+/** Terminal states are past tense — render them de-emphasised. */
+const QUIET_STATES: ReadonlySet<StripState> = new Set(["completed", "killed"]);
 
 class StripComponent implements StripWidgetComponent {
     // Plain fields, not constructor parameter properties: Pi loads extensions
     // through a TS transform whose feature support we do not control here.
     private readonly getRows: () => StripRow[];
+    private readonly theme: StripTheme;
     private readonly onSelect: (job: Job) => void;
+    private readonly onToggle: () => void;
 
-    constructor(getRows: () => StripRow[], onSelect: (job: Job) => void) {
+    constructor(
+        getRows: () => StripRow[],
+        theme: StripTheme,
+        onSelect: (job: Job) => void,
+        onToggle: () => void
+    ) {
         this.getRows = getRows;
+        this.theme = theme;
         this.onSelect = onSelect;
+        this.onToggle = onToggle;
     }
 
     render(width: number): string[] {
-        return this.getRows().map((row) => truncate(row.text, width));
+        return this.getRows().map((row) => {
+            if (row.kind === "toggle") {
+                return truncateToWidth(this.theme.fg("dim", row.text), width);
+            }
+
+            const { glyph, slot } = STATE_STYLE[row.state];
+            const head = this.theme.fg(slot, glyph);
+            const body = `${row.name.padEnd(15)} ${row.detail.padEnd(24)} ${row.elapsed}`;
+            const text = QUIET_STATES.has(row.state) ? this.theme.fg("dim", body) : body;
+            return truncateToWidth(`${head} ${text}`, width);
+        });
     }
 
     handleMouse(event: StripMouseEvent): StripMouseResult | undefined {
@@ -64,7 +98,8 @@ class StripComponent implements StripWidgetComponent {
         const row = this.getRows()[event.y];
         if (!row) return undefined;
 
-        this.onSelect(row.job);
+        if (row.kind === "toggle") this.onToggle();
+        else this.onSelect(row.job);
         return { handled: true };
     }
 
@@ -77,18 +112,21 @@ class StripComponent implements StripWidgetComponent {
  * Build the widget factory for `setWidget`'s component overload.
  *
  * @param getRows  Live row supplier, read on every render.
- * @param onSelect Invoked with the clicked row's job.
+ * @param theme    Pi theme, used for semantic slot colours.
+ * @param onSelect Invoked with the clicked job row.
+ * @param onToggle Invoked when the collapse/expand line is clicked.
  * @param onHandle Receives the TUI handle so the caller can request renders.
  */
 export function createStripWidget(
     getRows: () => StripRow[],
-    _theme: StripTheme,
+    theme: StripTheme,
     onSelect: (job: Job) => void,
+    onToggle: () => void,
     onHandle: (tui: StripTui) => void
 ): (tui: StripTui, theme: StripTheme) => StripWidgetComponent {
-    return (tui: StripTui) => {
+    return (tui: StripTui, factoryTheme: StripTheme) => {
         onHandle(tui);
-        return new StripComponent(getRows, onSelect);
+        return new StripComponent(getRows, factoryTheme ?? theme, onSelect, onToggle);
     };
 }
 
@@ -104,12 +142,12 @@ export async function openStripPanel(job: Job, ctx: UiContext): Promise<void> {
 
     const custom = ctx.ui.custom;
     if (typeof custom !== "function") {
-        ctx.ui.notify(`▶ ${jobLabel(job)} · ${job.status}`, "info");
+        ctx.ui.notify(`▶ ${job.name ?? job.id} · ${job.status}`, "info");
         return;
     }
 
     const body = [
-        `▶ ${jobLabel(job)} · ${job.status}`,
+        `▶ ${job.name ?? job.id} · ${job.status}`,
         "",
         "        (empty — wired up next)",
         "",
@@ -117,7 +155,7 @@ export async function openStripPanel(job: Job, ctx: UiContext): Promise<void> {
     ];
 
     await custom((_tui, _theme, _kb, done) => ({
-        render: (width: number) => body.map((line) => truncate(line, width)),
+        render: (width: number) => body.map((line) => truncateToWidth(line, width)),
         invalidate: () => {},
         handleInput: (data: string) => {
             if (data === "\u001b" || data === "q" || data === "\r" || data === "\n") {

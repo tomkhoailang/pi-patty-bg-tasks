@@ -15,11 +15,12 @@ import {
     type Job,
     type JobKind,
     type StripRow,
+    type StripState,
     type UiContext,
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
-import { createStripWidget, openStripPanel } from "./strip.ts";
+import { STRIP_VISIBLE_LIMIT, createStripWidget, openStripPanel } from "./strip.ts";
 
 // --- ID generation -------------------------------------------------------
 
@@ -179,27 +180,70 @@ function deleteLogFile(logPath: string): number {
  * widget isn't redrawn on a timer otherwise). Re-renders only when the content
  * actually changes. Call after any state change that affects running jobs.
  */
-/** Build one clickable strip row per running job. */
+/** Build the structured strip row for one job. */
+function jobRow(job: Job, state: StripState): StripRow {
+    return {
+        kind: "job",
+        job,
+        state,
+        name: jobLabel(job),
+        detail: (readLastLine(job.logPath) || job.command).slice(0, PREVIEW_CHARS.progress),
+        elapsed: formatDuration(Date.now() - job.startTime),
+    };
+}
+
+/** Newest-finished first, using the stamped finish time when present. */
+function byFinishDesc(a: Job, b: Job): number {
+    return (b.endedAt ?? b.startTime) - (a.endedAt ?? a.startTime);
+}
+
+/**
+ * Build the rows the strip renders, applying the attention policy:
+ *
+ *   - running jobs fill the visible budget first (STRIP_VISIBLE_LIMIT)
+ *   - failures ride BELOW the running rows and are never displaced by that
+ *     limit — an unacknowledged failure is a decision still outstanding
+ *   - completed / killed are expanded-only: you either just stopped it or it
+ *     already succeeded, so neither earns space in the collapsed view
+ *   - a toggle line appears only when something is actually hidden
+ */
 function buildStripRows(reg: BackgroundRegistry): StripRow[] {
-    const rows: StripRow[] = [];
-    for (const job of reg.jobs.values()) {
-        if (job.status !== "running") continue;
-        const duration = formatDuration(Date.now() - job.startTime);
-        const glyph = job.kind === "monitor" ? "◉" : "▶";
-        // Show the job's latest output line as live progress; fall back to the
-        // command until there's any output. Re-read on every render.
-        const progress = readLastLine(job.logPath) || job.command;
-        rows.push({
-            job,
-            text: `${glyph} ${jobLabel(job)}: ${progress.slice(0, PREVIEW_CHARS.progress)} (${duration})`,
-        });
+    const jobs = Array.from(reg.jobs.values());
+
+    const running = jobs
+        .filter((job) => job.status === "running")
+        .map((job) => jobRow(job, job.stalled ? "stalled" : "running"));
+
+    const failed = jobs
+        .filter((job) => job.status === "failed")
+        .sort(byFinishDesc)
+        .slice(0, STRIP_VISIBLE_LIMIT)
+        .map((job) => jobRow(job, "failed"));
+
+    const quiet = reg.stripExpanded
+        ? jobs
+              .filter((job) => job.status === "completed" || job.status === "killed")
+              .sort(byFinishDesc)
+              .slice(0, STRIP_VISIBLE_LIMIT)
+              .map((job) => jobRow(job, job.status as StripState))
+        : [];
+
+    const visibleRunning = reg.stripExpanded ? running : running.slice(0, STRIP_VISIBLE_LIMIT);
+    const rows = [...visibleRunning, ...failed, ...quiet];
+    const total = running.length + failed.length + quiet.length;
+
+    if (!reg.stripExpanded && total > rows.length) {
+        rows.push({ kind: "toggle", text: `▾ +${total - rows.length} more` });
+    } else if (reg.stripExpanded && total > STRIP_VISIBLE_LIMIT) {
+        rows.push({ kind: "toggle", text: "▴ collapse" });
     }
+
     return rows;
 }
 
 /**
- * Render the pill-bar widget and aggregate status-bar text, and keep a 1 Hz
- * ticker running while any job is alive so the durations stay live.
+ * Render the pill-bar widget and status-bar text, and keep a 1 Hz ticker
+ * running while any job is alive so durations stay live.
  *
  * The widget uses setWidget's COMPONENT overload rather than `string[]`: the
  * string form is capped at 10 lines and cannot receive mouse events. Pi keeps
@@ -210,10 +254,13 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
  */
 export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
     const rows = buildStripRows(reg);
-    const runningCount = rows.length;
+    const jobs = Array.from(reg.jobs.values());
+    const runningCount = jobs.filter((job) => job.status === "running").length;
+    const stalledCount = jobs.filter((job) => job.status === "running" && job.stalled).length;
+    const failedCount = jobs.filter((job) => job.status === "failed").length;
     const isTui = ctx.mode === "tui";
 
-    if (runningCount === 0) {
+    if (rows.length === 0) {
         stopSidebarTicker(reg);
         if (reg.stripInstalled || reg.lastSidebarContent !== undefined || reg.lastStatusText !== undefined) {
             reg.stripInstalled = false;
@@ -235,38 +282,60 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                     () => buildStripRows(reg),
                     ctx.ui.theme,
                     (job) => { void openStripPanel(job, ctx); },
+                    () => {
+                        reg.stripExpanded = !reg.stripExpanded;
+                        try {
+                            reg.stripTui?.requestRender();
+                        } catch {
+                            /* stale handle — the next install recreates it */
+                        }
+                    },
                     (handle) => { reg.stripTui = handle; }
                 )
             );
         }
     } else {
-        const key = rows.map((row) => row.text).join("\n");
+        const key = rows
+            .map((row) => (row.kind === "toggle" ? row.text : `${row.name}:${row.detail}:${row.elapsed}`))
+            .join("\n");
         if (key !== reg.lastSidebarContent) {
             reg.lastSidebarContent = key;
-            ctx.ui.setWidget("background-jobs", rows.map((row) => row.text));
+            ctx.ui.setWidget(
+                "background-jobs",
+                rows.map((row) =>
+                    row.kind === "toggle" ? row.text : `▶ ${row.name}: ${row.detail} (${row.elapsed})`
+                )
+            );
         }
     }
 
-    const parts = [`${runningCount} running`];
-    if (reg.completedCount > 0) parts.push(`${reg.completedCount} done`);
-    if (reg.failedCount > 0) parts.push(`${reg.failedCount} failed`);
-    const statusText = `▶ ${parts.join(", ")}`;
+    // Status line: semantic slots joined by a dim separator.
+    const parts: string[] = [];
+    if (runningCount > 0) parts.push(ctx.ui.theme.fg("accent", `▶ ${runningCount} running`));
+    if (stalledCount > 0) parts.push(ctx.ui.theme.fg("warning", `⚠ ${stalledCount} stalled`));
+    if (failedCount > 0) parts.push(ctx.ui.theme.fg("error", `✗ ${failedCount} failed`));
+    if (reg.completedCount > 0) parts.push(ctx.ui.theme.fg("dim", `✓ ${reg.completedCount} done`));
+    const statusText = parts.join(ctx.ui.theme.fg("dim", " · "));
 
     if (statusText !== reg.lastStatusText) {
         reg.lastStatusText = statusText;
-        ctx.ui.setStatus("background-jobs", ctx.ui.theme.fg("accent", statusText));
+        ctx.ui.setStatus("background-jobs", statusText);
     }
 
-    try {
-        reg.stripTui?.requestRender();
-    } catch {
-        // TUI handle went stale (session reload/switch) — drop it and let the
-        // next install recreate the widget.
-        reg.stripTui = undefined;
-        reg.stripInstalled = false;
+    if (runningCount > 0) {
+        try {
+            reg.stripTui?.requestRender();
+        } catch {
+            // TUI handle went stale (session reload/switch) — drop it so the
+            // next pass reinstalls the widget.
+            reg.stripTui = undefined;
+            reg.stripInstalled = false;
+        }
+        ensureSidebarTicker(reg, ctx);
+    } else {
+        // Only terminal rows left: nothing ticks, so no timer needed.
+        stopSidebarTicker(reg);
     }
-
-    ensureSidebarTicker(reg, ctx);
 }
 
 /** Start the live-duration ticker if not already running. */

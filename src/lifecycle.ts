@@ -68,6 +68,7 @@ export function startBackgroundJob(args: {
         disablePromptStall: args.disablePromptStall,
         disableOversizeKill: args.disableOversizeKill,
         onOversize: () => terminateJobSilently(args.reg, args.job),
+        onStall: () => { args.job.stalled = true; },
     });
     jobAc.signal.addEventListener("abort", cancelStall, { once: true });
     void args.exit.then((code) => {
