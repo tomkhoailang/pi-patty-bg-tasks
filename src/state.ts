@@ -39,6 +39,11 @@ export class BackgroundRegistry {
      *  line budget (STRIP_VISIBLE_LINES × columns). Toggled by clicking the
      *  strip's toggle line. */
     stripExpanded = false;
+    /** Job id whose row is expanded inline in the strip, if any. */
+    stripExpandedJob: string | undefined = undefined;
+    /** Injected from index.ts. registry.ts cannot import lifecycle.ts (which
+     *  imports registry.ts), so the strip's `x` kill routes through here. */
+    killJob: ((job: Job) => void) | undefined = undefined;
 
     /** Finished jobs + monitor terminals awaiting a coalesced notice (notify.ts).
      *  Buffered so a whole turn's worth of finishes surfaces as one summary, not

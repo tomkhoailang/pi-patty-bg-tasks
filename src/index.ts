@@ -49,6 +49,11 @@ interface PersistedState {
 export default function (pi: ExtensionAPI): void {
     const reg = new BackgroundRegistry();
 
+    // The strip's `x` key kills a job, but registry.ts cannot import
+    // lifecycle.ts — lifecycle.ts already imports registry.ts for renderSidebar.
+    // Inject the hook instead of introducing a cycle.
+    reg.killJob = (job: Job) => terminateJobSilently(reg, job);
+
     // ── Tool registration ─────────────────────────────────────────
     // Use the unwrapped tool *definition* so the override inherits Pi's native
     // bash renderCall/renderResult (createBashTool returns a wrapped AgentTool

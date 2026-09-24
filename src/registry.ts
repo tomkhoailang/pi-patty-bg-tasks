@@ -26,6 +26,34 @@ import { STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.
  *  reached when expanded — it exists so a long session cannot accumulate an
  *  unbounded row list. */
 const STRIP_POOL_MAX = 20;
+/** Bytes of log tail read for the inline detail block. */
+const DETAIL_TAIL_CHARS = 400;
+/** Log lines kept in that block (plus a meta line and the key hint). */
+const DETAIL_LINES = 3;
+
+/**
+ * Detail shown under the expanded row: a meta line plus recent output. Bounded
+ * so the block cannot grow and push the rest of the strip around.
+ */
+function stripDetail(job: Job): string[] {
+    const exit = job.exitCode !== undefined ? ` · exit ${job.exitCode}` : "";
+    const meta = `${job.status}${exit} · ${formatDuration(Date.now() - job.startTime)}`;
+    const tail = readLogTail(job, DETAIL_TAIL_CHARS)
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.length > 0);
+    return [meta, ...tail.slice(-DETAIL_LINES)];
+}
+
+/** Ask the widget to repaint. A stale handle means the next install recreates it. */
+function requestStripRender(reg: BackgroundRegistry): void {
+    try {
+        reg.stripTui?.requestRender();
+    } catch {
+        reg.stripTui = undefined;
+        reg.stripInstalled = false;
+    }
+}
 
 // --- ID generation -------------------------------------------------------
 
@@ -264,6 +292,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
         if (reg.stripInstalled || reg.lastSidebarContent !== undefined || reg.lastStatusText !== undefined) {
             reg.stripInstalled = false;
             reg.stripTui = undefined;
+            reg.stripExpandedJob = undefined;
             reg.lastSidebarContent = undefined;
             reg.lastStatusText = undefined;
             ctx.ui.setWidget("background-jobs", undefined);
@@ -280,16 +309,25 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                 createStripWidget(
                     () => buildStripRows(reg),
                     ctx.ui.theme,
-                    (job) => { void openStripPanel(job, ctx); },
-                    () => {
-                        reg.stripExpanded = !reg.stripExpanded;
-                        try {
-                            reg.stripTui?.requestRender();
-                        } catch {
-                            /* stale handle — the next install recreates it */
-                        }
+                    {
+                        select: (job) => { void openStripPanel(job, ctx); },
+                        expand: (jobId) => {
+                            reg.stripExpandedJob = jobId;
+                            requestStripRender(reg);
+                        },
+                        toggleList: () => {
+                            reg.stripExpanded = !reg.stripExpanded;
+                            requestStripRender(reg);
+                        },
+                        kill: (job) => {
+                            reg.killJob?.(job);
+                            reg.stripExpandedJob = undefined;
+                            renderSidebar(reg, ctx);
+                        },
+                        expandedJobId: () => reg.stripExpandedJob,
+                        listExpanded: () => reg.stripExpanded,
+                        detail: stripDetail,
                     },
-                    () => reg.stripExpanded,
                     (handle) => { reg.stripTui = handle; }
                 )
             );
@@ -323,14 +361,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
     }
 
     if (liveCount > 0) {
-        try {
-            reg.stripTui?.requestRender();
-        } catch {
-            // TUI handle went stale (session reload/switch) — drop it so the
-            // next pass reinstalls the widget.
-            reg.stripTui = undefined;
-            reg.stripInstalled = false;
-        }
+        requestStripRender(reg);
         ensureSidebarTicker(reg, ctx);
     } else {
         // Only terminal rows left: nothing ticks, so no timer needed.

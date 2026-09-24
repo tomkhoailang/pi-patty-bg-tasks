@@ -142,6 +142,29 @@ export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as
 /** Minimal TUI surface the strip needs from the widget factory. */
 export interface StripTui {
     requestRender(): void;
+    /** Release or reassign keyboard focus. `null` returns it to the editor. */
+    setFocus(component: unknown | null): void;
+}
+
+/**
+ * Callbacks the strip uses to act on a row. Grouped so the widget factory keeps
+ * a single collaborator rather than a growing positional argument list.
+ */
+export interface StripActions {
+    /** Open the modal panel for a job (name click, Enter, `o`). */
+    select(job: Job): void;
+    /** Set or clear the inline-expanded row (glyph click, `j`/`k`, `esc`). */
+    expand(jobId: string | undefined): void;
+    /** Collapse/expand the whole row list. */
+    toggleList(): void;
+    /** Terminate a job (`x`). */
+    kill(job: Job): void;
+    /** Job id of the inline-expanded row, if any. */
+    expandedJobId(): string | undefined;
+    /** Whether the row list is expanded past its line budget. */
+    listExpanded(): boolean;
+    /** Bounded log tail shown under the expanded row. */
+    detail(job: Job): string[];
 }
 
 /** Theme slice used for strip styling. */
@@ -191,10 +214,14 @@ export type StripRow =
       }
     | { kind: "toggle"; text: string };
 
-/** A widget component: renders lines, optionally handles pointer events. */
+/** A widget component: renders lines, optionally handles pointer + key input. */
 export interface StripWidgetComponent {
     render(width: number): string[];
     handleMouse?(event: StripMouseEvent): StripMouseResult | undefined;
+    /** Called only while the component holds focus. */
+    handleInput?(data: string): void;
+    /** Set by Pi when focus changes (implements Focusable). */
+    focused?: boolean;
     invalidate(): void;
     dispose?(): void;
 }

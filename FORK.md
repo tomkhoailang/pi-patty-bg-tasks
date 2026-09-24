@@ -211,6 +211,60 @@ The counters are now disjoint (`running` excludes stalled), while a separate
 `liveCount` — running **and** stalled — drives the ticker, so elapsed times keep
 counting on a stalled row even when no healthy work is running.
 
+### Inline expand vs modal
+
+A row has two click zones: the **glyph** expands the job inline, the **name**
+opens the modal. Within a cell the glyph occupies the first two columns, so the
+zone is `event.x - slotInLine * cellWidth < 2`.
+
+Inline placement has to be done by the component itself. `ctx.ui.custom()`
+*"temporarily gives one component control of the interactive area"* — and that
+area sits **below** the widget, so a custom panel can only ever appear under the
+whole list, never under the clicked row. Drawing the detail inside the strip is
+the only way to put it where the user clicked.
+
+With multiple columns there is no "below the clicked row" — the row shares a line
+with others — so the detail goes below the **grid line** containing it, spanning
+the full width. At a single column that is identical to "below the row".
+
+This also forced `layout()` to grow into a real line map (`grid` / `detail` /
+`toggle`) rather than a flat row list, because the detail block shifts every grid
+line beneath it. The hit-test walks that same map, so a click can never land on a
+row that moved.
+
+### Keyboard requires focus
+
+`handleInput` is only called while the component **has focus**, and a mouse
+handler can claim it:
+
+```ts
+// TuiMouseEventResult
+/** Give keyboard focus to this component. Implies handled. */
+focus?: boolean;
+```
+
+So a glyph click takes focus, the component implements `Focusable`, and `esc`
+releases it with `tui.setFocus(null)`.
+
+**The risk:** while focused, the editor does not receive keystrokes. Focus is
+released unconditionally on `esc`/`q`, and the hint line always ends with
+`esc close` so the way out is never hidden.
+
+`esc` is matched with `matchesKey(data, "escape")`, never a raw `"\u001b"`
+compare. A bare ESC is the prefix byte of every escape sequence and is reported
+differently under the Kitty protocol — a raw compare silently never matches,
+which is exactly why `q` worked and `esc` did not.
+
+| Key | Action |
+|---|---|
+| `esc` / `q` | collapse, release focus |
+| `j` / `↓` | expand next job |
+| `k` / `↑` | expand previous |
+| `x` | kill the expanded job |
+| `o` / `Enter` | open the modal |
+
+Deferred: `r` re-run, `a` acknowledge, `g`/`G` detail scroll.
+
 ### Mouse click contract
 
 Pi delivers **both** a `press` and a `click` for one physical click. Handling each
@@ -258,7 +312,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.5.0-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.0-pi15
 ```
 
 ## Rebase onto a newer upstream release

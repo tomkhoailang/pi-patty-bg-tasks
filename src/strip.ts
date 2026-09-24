@@ -5,23 +5,26 @@
  * string form is capped at 10 lines and cannot receive pointer events, so this
  * module uses the component form: each rendered line is a click target.
  *
- * Hit-testing mirrors Pi's own `SelectList`: `TuiMouseEvent.y` is zero-based and
- * already local to the receiving component, so row N is simply `rows[event.y]`.
+ * Two click zones per row: the glyph expands the job **inline**, the name opens
+ * the **modal**. Inline expansion is drawn inside this component — placement
+ * under the clicked row is only possible if we render it ourselves, since
+ * `ctx.ui.custom()` takes over the interactive area below the widget.
+ *
+ * Row hit-testing mirrors Pi's own `SelectList`: `TuiMouseEvent.y` is zero-based
+ * and local to the receiving component. `layout()` is the single source of truth
+ * for what is drawn, and BOTH `render()` and `hitAt()` read it — computing the
+ * visible set twice is the bug class behind the press/click double-fire and the
+ * unreachable-rows counter.
  *
  * Events we do not claim return `undefined` rather than `{ handled: true }`, so
- * Pi keeps its fallbacks:
- *   - a primary-button drag stays available for transcript selection
- *   - wheel events still scroll the transcript
- * Only a left press/click on an occupied row is claimed.
- *
- * Styling uses Pi's semantic theme slots, so the strip follows the active theme
- * rather than hard-coded colours. `truncateToWidth` (not code-point slicing) is
- * required because rows now contain ANSI sequences.
+ * Pi keeps its fallbacks: a primary-button drag stays available for transcript
+ * selection and wheel events still scroll.
  */
 
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Job,
+    StripActions,
     StripMouseEvent,
     StripMouseResult,
     StripRow,
@@ -77,8 +80,21 @@ const STRIP_NAME_W = 12;
 const STRIP_ELAPSED_W = 5;
 /** Gutter between cells — the padding that separates one column from the next. */
 const STRIP_GAP = 2;
+/** Glyph zone width inside a cell: the glyph plus its trailing space. */
+const STRIP_GLYPH_W = 2;
 
 type StripJobRow = Extract<StripRow, { kind: "job" }>;
+
+/** What is on one rendered line. Built once in layout(), read by render + hit. */
+type StripLine =
+    | { kind: "grid"; rowIndices: number[] }
+    | { kind: "detail"; rowIndex: number }
+    | { kind: "toggle" };
+
+/** What a click landed on. */
+type StripHit =
+    | { kind: "job"; row: StripJobRow; zone: "glyph" | "name" }
+    | { kind: "toggle" };
 
 /** Cells per line for a given width. */
 function columnCount(width: number): number {
@@ -101,14 +117,25 @@ function padTo(cell: string, w: number): string {
     return cell + " ".repeat(Math.max(0, w - visibleWidth(cell)));
 }
 
+/** matchesKey throws on an unknown key id; treat that as "no match". */
+function isKey(data: string, key: string): boolean {
+    try {
+        return matchesKey(data, key as Parameters<typeof matchesKey>[1]);
+    } catch {
+        return false;
+    }
+}
+
 class StripComponent implements StripWidgetComponent {
+    /** Implements Focusable. Set by Pi when keyboard focus changes. */
+    focused = false;
+
     // Plain fields, not constructor parameter properties: Pi loads extensions
     // through a TS transform whose feature support we do not control here.
     private readonly getRows: () => StripRow[];
     private readonly theme: StripTheme;
-    private readonly onSelect: (job: Job) => void;
-    private readonly onToggle: () => void;
-    private readonly isExpanded: () => boolean;
+    private readonly actions: StripActions;
+    private tui: StripTui | undefined;
     /** Target captured on press, consumed on click.
      *
      *  Pi delivers BOTH a `press` and a `click` for one physical click. Acting
@@ -116,80 +143,108 @@ class StripComponent implements StripWidgetComponent {
      *  AFTER the first pass had mutated it — so clicking "+N more" expanded and
      *  then opened whichever job had landed on that row index. This mirrors
      *  Pi's SelectList: `press` records the target only, `click` activates. */
-    private pressedTarget: StripRow | "toggle" | undefined;
+    private pressed: StripHit | undefined;
 
-    constructor(
-        getRows: () => StripRow[],
-        theme: StripTheme,
-        onSelect: (job: Job) => void,
-        onToggle: () => void,
-        isExpanded: () => boolean
-    ) {
+    constructor(getRows: () => StripRow[], theme: StripTheme, actions: StripActions) {
         this.getRows = getRows;
         this.theme = theme;
-        this.onSelect = onSelect;
-        this.onToggle = onToggle;
-        this.isExpanded = isExpanded;
+        this.actions = actions;
+    }
+
+    setTui(tui: StripTui): void {
+        this.tui = tui;
     }
 
     /**
-     * Rows to draw, plus the toggle line when one applies.
-     *
-     * render() and hitAt() BOTH go through here, so the drawn layout and the
-     * hit-test can never disagree about which rows are visible. That
-     * inconsistency is exactly the bug class that produced the press/click
-     * double-fire and the unreachable-rows counter.
+     * Everything render() and hitAt() need, computed once.
      *
      * Collapsed shows the first `STRIP_VISIBLE_LINES × columns` running rows.
      * Stalled and failed ride along WITHOUT consuming that budget, so healthy
      * work can never squeeze out an outstanding decision. Completed and killed
      * are expanded-only.
      */
-    private layout(width: number): { rows: StripRow[]; toggle: string | undefined } {
+    private layout(width: number): {
+        rows: StripRow[];
+        cols: number;
+        lines: StripLine[];
+        toggleText: string | undefined;
+    } {
         const all = this.getRows();
-        const expanded = this.isExpanded();
-        const budget = STRIP_VISIBLE_LINES * columnCount(width);
+        const rows = this.budgetedRows(all, width);
+        const cols = columnCount(width);
 
-        let runningSeen = 0;
-        const rows = expanded
-            ? all
-            : all.filter((row) => {
-                  if (row.kind === "toggle") return false;
-                  if (row.state === "stalled" || row.state === "failed") return true;
-                  if (row.state === "running") return ++runningSeen <= budget;
-                  return false;
-              });
+        const expandedId = this.actions.expandedJobId();
+        const detailAt =
+            expandedId === undefined
+                ? -1
+                : rows.findIndex((row) => row.kind === "job" && row.job.id === expandedId);
 
-        let toggle: string | undefined;
-        if (!expanded) {
-            const hidden = all.length - rows.length;
-            if (hidden > 0) toggle = `▾ +${hidden} more`;
-        } else if (all.length > budget) {
-            toggle = "▴ collapse";
+        const lines: StripLine[] = [];
+        for (let i = 0; i < rows.length; i += cols) {
+            const rowIndices: number[] = [];
+            for (let c = 0; c < cols && i + c < rows.length; c++) rowIndices.push(i + c);
+            lines.push({ kind: "grid", rowIndices });
+            if (detailAt >= 0 && Math.floor(detailAt / cols) === Math.floor(i / cols)) {
+                lines.push({ kind: "detail", rowIndex: detailAt });
+            }
         }
-        return { rows, toggle };
+
+        let toggleText: string | undefined;
+        if (!this.actions.listExpanded()) {
+            const hidden = all.length - rows.length;
+            if (hidden > 0) toggleText = `▾ +${hidden} more`;
+        } else if (all.length > STRIP_VISIBLE_LINES * cols) {
+            toggleText = "▴ collapse";
+        }
+        if (toggleText) lines.push({ kind: "toggle" });
+
+        return { rows, cols, lines, toggleText };
+    }
+
+    /** Apply the line budget to the full row list. */
+    private budgetedRows(all: StripRow[], width: number): StripRow[] {
+        if (this.actions.listExpanded() || all.length === 0) return all;
+
+        const budget = STRIP_VISIBLE_LINES * columnCount(width);
+        const pinned = new Set<StripRow>();
+        let runningSeen = 0;
+
+        for (const row of all) {
+            if (row.kind === "toggle") continue;
+            if (row.state === "stalled" || row.state === "failed") {
+                pinned.add(row);
+                continue;
+            }
+            if (row.state !== "running") continue;
+            runningSeen++;
+            if (runningSeen <= budget) pinned.add(row);
+        }
+        return all.filter((row) => pinned.has(row));
     }
 
     render(width: number): string[] {
-        const { rows, toggle } = this.layout(width);
-        if (rows.length === 0 && toggle === undefined) return [];
-
-        const cols = columnCount(width);
+        const { rows, cols, lines, toggleText } = this.layout(width);
         const cw = cellWidth(width);
         const contentW = Math.max(1, cw - STRIP_GAP);
 
-        const lines: string[] = [];
-        for (let i = 0; i < rows.length; i += cols) {
-            let line = "";
-            for (let c = 0; c < cols && i + c < rows.length; c++) {
-                line += padTo(this.renderJob(rows[i + c] as StripJobRow, contentW), cw);
+        const out: string[] = [];
+        for (const line of lines) {
+            if (line.kind === "toggle") {
+                if (toggleText) out.push(truncateToWidth(this.theme.fg("dim", toggleText), width));
+                continue;
             }
-            lines.push(line.replace(/ +$/, ""));
+            if (line.kind === "detail") {
+                const row = rows[line.rowIndex];
+                if (row && row.kind === "job") out.push(...this.renderDetail(row.job, width));
+                continue;
+            }
+            let text = "";
+            for (const index of line.rowIndices) {
+                text += padTo(this.renderJob(rows[index] as StripJobRow, contentW), cw);
+            }
+            out.push(text.replace(/ +$/, ""));
         }
-
-        // The toggle spans the full width on its own line, outside the grid.
-        if (toggle) lines.push(truncateToWidth(this.theme.fg("dim", toggle), width));
-        return lines;
+        return out;
     }
 
     /** One cell: coloured glyph + name, elapsed, then detail (truncated last). */
@@ -206,23 +261,48 @@ class StripComponent implements StripWidgetComponent {
     }
 
     /**
+     * The inline block under the expanded row: bounded log tail, then the key
+     * hint. The hint is last so the log reads first, and the block is small
+     * enough that it cannot be pushed off.
+     */
+    private renderDetail(job: Job, width: number): string[] {
+        const lines = this.actions.detail(job);
+        const out = lines.map((line) => truncateToWidth(this.theme.fg("dim", `   ↳ ${line}`), width));
+        out.push(
+            truncateToWidth(
+                this.theme.fg("dim", "     esc close · j/k switch · x kill · o modal"),
+                width
+            )
+        );
+        return out;
+    }
+
+    /**
      * Map a mouse position to whatever is under it.
      *
      * Columns change this mapping: `y` is a LINE and `x` selects the cell
-     * within it. The toggle spans the full width on its own line, so it is
-     * matched by line rather than by cell.
+     * within it. Which line holds what comes from layout(), so the hit-test can
+     * never disagree with what was drawn.
      */
-    private hitAt(event: StripMouseEvent): StripRow | "toggle" | undefined {
-        const { rows, toggle } = this.layout(event.width);
-        const cols = columnCount(event.width);
-        const cw = cellWidth(event.width);
-        const jobLines = Math.ceil(rows.length / cols);
+    private hitAt(event: StripMouseEvent): StripHit | undefined {
+        const { rows, cols, lines } = this.layout(event.width);
+        const line = lines[event.y];
+        if (!line) return undefined;
+        if (line.kind === "toggle") return { kind: "toggle" };
+        if (line.kind === "detail") return undefined;
 
-        if (event.y >= jobLines) {
-            return toggle !== undefined && event.y === jobLines ? "toggle" : undefined;
-        }
-        const index = event.y * cols + Math.floor(event.x / cw);
-        return index < rows.length ? rows[index] : undefined;
+        const cw = cellWidth(event.width);
+        const slotInLine = Math.floor(event.x / cw);
+        const index = line.rowIndices[slotInLine];
+        if (index === undefined) return undefined;
+
+        const row = rows[index];
+        if (!row || row.kind !== "job") return undefined;
+
+        // Within the cell, the glyph occupies the first columns and the name
+        // begins after them. Clicking the glyph expands; the name opens modal.
+        const inCell = event.x - slotInLine * cw;
+        return { kind: "job", row, zone: inCell < STRIP_GLYPH_W ? "glyph" : "name" };
     }
 
     handleMouse(event: StripMouseEvent): StripMouseResult | undefined {
@@ -236,17 +316,81 @@ class StripComponent implements StripWidgetComponent {
         // layout is derived from width, so stale coordinates could resolve to a
         // different cell on release.
         if (event.type === "press") {
-            this.pressedTarget = this.hitAt(event);
+            this.pressed = this.hitAt(event);
             return { handled: true };
         }
 
-        const target = this.pressedTarget ?? this.hitAt(event);
-        this.pressedTarget = undefined;
-        if (target === undefined) return undefined;
+        const hit = this.pressed ?? this.hitAt(event);
+        this.pressed = undefined;
+        if (hit === undefined) return undefined;
 
-        if (target === "toggle") this.onToggle();
-        else this.onSelect(target.job);
+        if (hit.kind === "toggle") {
+            this.actions.toggleList();
+            return { handled: true };
+        }
+
+        if (hit.zone === "glyph") {
+            // Expanding is the keyboard-driven mode, so claim focus with it —
+            // `esc`, `j`/`k` and `x` only reach us while we hold it.
+            const same = this.actions.expandedJobId() === hit.row.job.id;
+            this.actions.expand(same ? undefined : hit.row.job.id);
+            if (same) this.releaseFocus();
+            return { handled: true, focus: !same };
+        }
+
+        this.actions.select(hit.row.job);
         return { handled: true };
+    }
+
+    /**
+     * Keys, live only while focused. `esc` is checked with matchesKey rather
+     * than a raw "\u001b" compare — a bare ESC is the prefix byte of every
+     * escape sequence and is reported differently under the Kitty protocol,
+     * which is why a raw compare silently never matched.
+     */
+    handleInput(data: string): void {
+        if (isKey(data, "escape") || data === "q") {
+            this.actions.expand(undefined);
+            this.releaseFocus();
+            return;
+        }
+
+        const jobs = this.getRows().filter((row): row is StripJobRow => row.kind === "job");
+        if (jobs.length === 0) return;
+
+        const current = this.actions.expandedJobId();
+        const at = current === undefined ? -1 : jobs.findIndex((row) => row.job.id === current);
+
+        if (data === "j" || isKey(data, "down")) {
+            const next = jobs[at < 0 ? 0 : (at + 1) % jobs.length];
+            if (next) this.actions.expand(next.job.id);
+            return;
+        }
+        if (data === "k" || isKey(data, "up")) {
+            const prev = jobs[at <= 0 ? jobs.length - 1 : at - 1];
+            if (prev) this.actions.expand(prev.job.id);
+            return;
+        }
+
+        const selected = at >= 0 ? jobs[at] : undefined;
+        if (!selected) return;
+
+        if (data === "x") {
+            this.actions.kill(selected.job);
+            return;
+        }
+        if (data === "o" || isKey(data, "enter")) {
+            this.actions.select(selected.job);
+        }
+    }
+
+    /** Hand keyboard focus back to the editor. */
+    private releaseFocus(): void {
+        try {
+            this.tui?.setFocus(null);
+        } catch {
+            /* stale handle — the next install recreates it */
+        }
     }
 
     invalidate(): void {
@@ -257,32 +401,30 @@ class StripComponent implements StripWidgetComponent {
 /**
  * Build the widget factory for `setWidget`'s component overload.
  *
- * @param getRows    Live row supplier, read on every render.
- * @param theme      Pi theme, used for semantic slot colours.
- * @param onSelect   Invoked with the clicked job row.
- * @param onToggle   Invoked when the collapse/expand line is clicked.
- * @param isExpanded Whether the strip is currently expanded.
- * @param onHandle   Receives the TUI handle so the caller can request renders.
+ * @param getRows  Live row supplier, read on every render.
+ * @param theme    Pi theme, used for semantic slot colours.
+ * @param actions  Callbacks for expand / select / kill / list toggle.
+ * @param onHandle Receives the TUI handle so the caller can request renders.
  */
 export function createStripWidget(
     getRows: () => StripRow[],
     theme: StripTheme,
-    onSelect: (job: Job) => void,
-    onToggle: () => void,
-    isExpanded: () => boolean,
+    actions: StripActions,
     onHandle: (tui: StripTui) => void
 ): (tui: StripTui, theme: StripTheme) => StripWidgetComponent {
     return (tui: StripTui, factoryTheme: StripTheme) => {
         onHandle(tui);
-        return new StripComponent(getRows, factoryTheme ?? theme, onSelect, onToggle, isExpanded);
+        const component = new StripComponent(getRows, factoryTheme ?? theme, actions);
+        component.setTui(tui);
+        return component;
     };
 }
 
 /**
- * Placeholder panel opened by clicking a strip row.
+ * Modal panel opened by clicking a row's name (or `o` / Enter while expanded).
  *
- * Milestone 0: proves the click path end-to-end. The body is intentionally
- * empty — rows, live tail and actions come next.
+ * Inline expansion is the primary mode; this stays a placeholder for the
+ * full-screen view that will carry search and filtering.
  */
 export async function openStripPanel(job: Job, ctx: UiContext): Promise<void> {
     // Custom components are terminal-only (Pi's own guard for ctx.ui.custom).
@@ -306,9 +448,7 @@ export async function openStripPanel(job: Job, ctx: UiContext): Promise<void> {
         render: (width: number) => body.map((line) => truncateToWidth(line, width)),
         invalidate: () => {},
         handleInput: (data: string) => {
-            if (data === "\u001b" || data === "q" || data === "\r" || data === "\n") {
-                done(undefined);
-            }
+            if (isKey(data, "escape") || data === "q" || isKey(data, "enter")) done(undefined);
         },
     }));
 }
