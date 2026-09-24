@@ -54,6 +54,15 @@ const STATE_STYLE: Record<StripState, { glyph: string; slot: string }> = {
 /** Terminal states are past tense — render them de-emphasised. */
 const QUIET_STATES: ReadonlySet<StripState> = new Set(["completed", "killed"]);
 
+/**
+ * States that are an EXCEPTION rather than normal progress. These colour the
+ * WHOLE row, not just the glyph: one coloured character ahead of plain text is
+ * too easy to miss while scanning several rows. Healthy running jobs stay
+ * glyph-only so a busy strip stays calm — the row is loud only when something
+ * actually needs a decision.
+ */
+const LOUD_STATES: ReadonlySet<StripState> = new Set(["stalled", "failed"]);
+
 class StripComponent implements StripWidgetComponent {
     // Plain fields, not constructor parameter properties: Pi loads extensions
     // through a TS transform whose feature support we do not control here.
@@ -91,7 +100,11 @@ class StripComponent implements StripWidgetComponent {
             const { glyph, slot } = STATE_STYLE[row.state];
             const head = this.theme.fg(slot, glyph);
             const body = `${row.name.padEnd(15)} ${row.detail.padEnd(24)} ${row.elapsed}`;
-            const text = QUIET_STATES.has(row.state) ? this.theme.fg("dim", body) : body;
+            const text = QUIET_STATES.has(row.state)
+                ? this.theme.fg("dim", body)
+                : LOUD_STATES.has(row.state)
+                  ? this.theme.fg(slot, body)
+                  : body;
             return truncateToWidth(`${head} ${text}`, width);
         });
     }

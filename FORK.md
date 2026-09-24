@@ -102,6 +102,16 @@ one that broke. And `warning` is reserved for the stall watcher's verdict rather
 than a kill: pure yellow is the loudest slot Pi ships and should mean "something
 is wrong", not "you pressed Ctrl+X".
 
+Attention states colour the **whole row**, not just the glyph. One coloured
+character ahead of plain text is too easy to miss while scanning several rows —
+which is exactly when an exception matters most:
+
+| Row kind | Treatment |
+|---|---|
+| healthy running | glyph colour only — keeps a busy strip calm |
+| stalled / failed | whole row in its slot colour |
+| completed / killed | whole row dimmed |
+
 Rows now contain ANSI, so `render()` uses `truncateToWidth` from
 `@earendil-works/pi-tui` instead of code-point slicing — the previous approach was
 only safe because rows were plain text. That adds the package's first non-core
@@ -181,7 +191,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.2-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.3.3-pi15
 ```
 
 ## Rebase onto a newer upstream release
