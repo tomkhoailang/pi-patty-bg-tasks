@@ -35,8 +35,9 @@ export class BackgroundRegistry {
     stripInstalled = false;
     /** TUI handle captured from the widget factory — drives strip re-renders. */
     stripTui: StripTui | undefined = undefined;
-    /** True while the strip shows every eligible row instead of the first
-     *  STRIP_VISIBLE_LIMIT. Toggled by clicking the strip's toggle line. */
+    /** True while the strip shows every eligible row instead of the collapsed
+     *  line budget (STRIP_VISIBLE_LINES × columns). Toggled by clicking the
+     *  strip's toggle line. */
     stripExpanded = false;
 
     /** Finished jobs + monitor terminals awaiting a coalesced notice (notify.ts).

@@ -20,7 +20,12 @@ import {
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
-import { STRIP_VISIBLE_LIMIT, createStripWidget, openStripPanel } from "./strip.ts";
+import { STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.ts";
+
+/** Upper bound on the completed/killed pool the strip may draw from. Only
+ *  reached when expanded — it exists so a long session cannot accumulate an
+ *  unbounded row list. */
+const STRIP_POOL_MAX = 20;
 
 // --- ID generation -------------------------------------------------------
 
@@ -198,16 +203,13 @@ function byFinishDesc(a: Job, b: Job): number {
 }
 
 /**
- * Build the rows the strip renders, applying the attention policy:
+ * Build the full ordered row list. **No slicing and no toggle here** — the
+ * visible budget depends on the terminal width (it is expressed in lines, not
+ * items), and width is only known inside the widget component. The strip's
+ * render() and hit-test both apply that budget through one shared function so
+ * they cannot disagree about what is visible.
  *
- *   - running jobs fill the visible budget first (STRIP_VISIBLE_LIMIT)
- *   - stalled jobs are pinned: blocked on a human, they will never progress,
- *     so the limit must not be able to hide them
- *   - failures ride BELOW the running rows and are never displaced by that
- *     limit — an unacknowledged failure is a decision still outstanding
- *   - completed / killed are expanded-only: you either just stopped it or it
- *     already succeeded, so neither earns space in the collapsed view
- *   - a toggle line appears only when something is actually hidden
+ * Order is canonical: running, then the pinned buckets, then quiet history.
  */
 function buildStripRows(reg: BackgroundRegistry): StripRow[] {
     const jobs = Array.from(reg.jobs.values());
@@ -223,33 +225,15 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
     const failed = jobs
         .filter((job) => job.status === "failed")
         .sort(byFinishDesc)
-        .slice(0, STRIP_VISIBLE_LIMIT)
         .map((job) => jobRow(job, "failed"));
 
-    const quietPool = jobs
+    const quiet = jobs
         .filter((job) => job.status === "completed" || job.status === "killed")
         .sort(byFinishDesc)
-        .slice(0, STRIP_VISIBLE_LIMIT);
+        .slice(0, STRIP_POOL_MAX)
+        .map((job) => jobRow(job, job.status as StripState));
 
-    const quiet = reg.stripExpanded
-        ? quietPool.map((job) => jobRow(job, job.status as StripState))
-        : [];
-
-    const visibleRunning = reg.stripExpanded ? running : running.slice(0, STRIP_VISIBLE_LIMIT);
-    const rows = [...visibleRunning, ...stalled, ...failed, ...quiet];
-
-    // Count what expansion WOULD reveal, not merely what is hidden right now:
-    // `quiet` is empty while collapsed, so comparing against rows.length alone
-    // reported "nothing hidden" and left killed/completed jobs unreachable.
-    const reachable = running.length + stalled.length + failed.length + quietPool.length;
-
-    if (!reg.stripExpanded && reachable > rows.length) {
-        rows.push({ kind: "toggle", text: `▾ +${reachable - rows.length} more` });
-    } else if (reg.stripExpanded && reachable > STRIP_VISIBLE_LIMIT) {
-        rows.push({ kind: "toggle", text: "▴ collapse" });
-    }
-
-    return rows;
+    return [...running, ...stalled, ...failed, ...quiet];
 }
 
 /**
@@ -305,22 +289,23 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                             /* stale handle — the next install recreates it */
                         }
                     },
+                    () => reg.stripExpanded,
                     (handle) => { reg.stripTui = handle; }
                 )
             );
         }
     } else {
-        const key = rows
-            .map((row) => (row.kind === "toggle" ? row.text : `${row.name}:${row.detail}:${row.elapsed}`))
-            .join("\n");
+        // No columns outside the TUI, so the line budget has nothing to
+        // multiply by — show that many rows flat.
+        const shown = rows
+            .slice(0, STRIP_VISIBLE_LINES)
+            .map((row) =>
+                row.kind === "toggle" ? row.text : `▶ ${row.name}: ${row.detail} (${row.elapsed})`
+            );
+        const key = shown.join("\n");
         if (key !== reg.lastSidebarContent) {
             reg.lastSidebarContent = key;
-            ctx.ui.setWidget(
-                "background-jobs",
-                rows.map((row) =>
-                    row.kind === "toggle" ? row.text : `▶ ${row.name}: ${row.detail} (${row.elapsed})`
-                )
-            );
+            ctx.ui.setWidget("background-jobs", shown);
         }
     }
 

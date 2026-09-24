@@ -131,10 +131,11 @@ nowhere to appear. The policy is now:
 
 ### Collapse
 
-`STRIP_VISIBLE_LIMIT` (default **3**, override with `PI_PATTY_STRIP_LIMIT`,
-clamped to 20) bounds the collapsed view. Clicking `▾ +N more` expands; `▴ collapse`
-returns. The component overload has **no `MAX_WIDGET_LINES` guard**, so this limit
-is the only bound on strip height — do not remove it without another.
+The collapsed view is bounded by **lines**, not items: `STRIP_VISIBLE_LINES`
+(default **3**, override with `PI_PATTY_STRIP_LINES`). The item budget is
+*lines × columns* — see the responsive grid below. Clicking `▾ +N more` expands;
+`▴ collapse` returns. The component overload has **no `MAX_WIDGET_LINES` guard**,
+so this is the only bound on strip height — do not remove it without another.
 
 ### Stall state
 
@@ -163,18 +164,41 @@ least critical field, so a long command degrades to `my_very_long_comma...`
 rather than pushing the elapsed time out of the cell. The toggle line spans the
 full width on its own row and is not part of the grid.
 
-It also saves vertical space: eight jobs is eight lines at 60 columns but **four**
+It also saves vertical space: eight jobs is eight lines at 60 columns but **three**
 at 160 — which matters, because the component overload has no `MAX_WIDGET_LINES`
 guard.
 
-**The mouse mapping changed.** `y` is now a LINE and `x` selects the cell:
+#### The collapse budget is LINES, not items
+
+An item-based limit was wrong once columns existed: three items in three columns
+is **one line**, so it hid work it had width to show. Vertical space is the real
+resource, so the budget is expressed in lines and the item budget is derived from
+it:
+
+| width | columns | item budget |
+|---|---|---|
+| 60 | 1 | 3 |
+| 120 | 2 | 6 |
+| 160 | 3 | 9 |
+| 200 | 4 | 12 |
+
+At a single column this degenerates to the same floor of three items.
+
+Because the budget depends on width, the slicing had to move out of `registry.ts`
+(which has no width) into the widget component. `buildStripRows` now returns the
+**full** ordered list, and the component's `layout(width)` is the single source of
+truth for what is visible — called by **both** `render()` and `hitAt()`. Two
+independent computations of that list is exactly the bug class that produced the
+press/click double-fire and the unreachable-rows counter.
+
+**The mouse mapping changed.** `y` is a LINE and `x` selects the cell:
 
 ```
 index = y * columnCount(width) + floor(x / cellWidth(width))
 ```
 
-`press` records the resolved *row index*, not the raw line, so a relayout between
-press and click cannot point at a neighbouring cell.
+`press` records the resolved *target*, not the raw coordinates, so a relayout
+between press and click cannot point at a neighbouring cell.
 
 ### Status-line counters must not double-count
 
@@ -219,7 +243,7 @@ comparing against the rendered row count alone reported "nothing hidden" and lef
 those jobs with no affordance to reach them.
 
 ```sh
-PI_PATTY_STRIP_LIMIT=5 pi    # show 5 rows before collapsing
+PI_PATTY_STRIP_LINES=5 pi    # allow 5 lines before collapsing
 ```
 
 ## Environment override
@@ -234,7 +258,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.4.1-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.5.0-pi15
 ```
 
 ## Rebase onto a newer upstream release

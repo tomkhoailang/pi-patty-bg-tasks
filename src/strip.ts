@@ -33,14 +33,17 @@ import type {
 } from "./types.ts";
 
 /**
- * How many rows the strip shows before collapsing behind a "+N more" line.
- * Override with PI_PATTY_STRIP_LIMIT. Clamped to a sane range: 0 or garbage
- * falls back to 3, and anything above 20 is capped so the strip cannot eat the
- * viewport (the component overload has no MAX_WIDGET_LINES guard).
+ * How many LINES the collapsed strip may occupy.
+ *
+ * The item budget is this times the column count, so a wide terminal uses the
+ * width it has instead of showing three items on one line. At a single column
+ * that is the floor of three items. Override with PI_PATTY_STRIP_LINES. The
+ * component overload has no MAX_WIDGET_LINES guard, so this is the only bound
+ * on strip height.
  */
-const ENV_LIMIT = Number(process.env.PI_PATTY_STRIP_LIMIT);
-export const STRIP_VISIBLE_LIMIT =
-    Number.isFinite(ENV_LIMIT) && ENV_LIMIT > 0 ? Math.min(Math.floor(ENV_LIMIT), 20) : 3;
+const ENV_LINES = Number(process.env.PI_PATTY_STRIP_LINES);
+export const STRIP_VISIBLE_LINES =
+    Number.isFinite(ENV_LINES) && ENV_LINES > 0 ? Math.min(Math.floor(ENV_LINES), 10) : 3;
 
 /** State → glyph + Pi theme slot. */
 const STATE_STYLE: Record<StripState, { glyph: string; slot: string }> = {
@@ -105,51 +108,87 @@ class StripComponent implements StripWidgetComponent {
     private readonly theme: StripTheme;
     private readonly onSelect: (job: Job) => void;
     private readonly onToggle: () => void;
-    /** Row index captured on press, consumed on click.
+    private readonly isExpanded: () => boolean;
+    /** Target captured on press, consumed on click.
      *
      *  Pi delivers BOTH a `press` and a `click` for one physical click. Acting
      *  on each fired the action twice, and the second pass read the row list
      *  AFTER the first pass had mutated it — so clicking "+N more" expanded and
      *  then opened whichever job had landed on that row index. This mirrors
-     *  Pi's SelectList: `press` records position only, `click` activates. */
-    private pressedIndex: number | undefined;
+     *  Pi's SelectList: `press` records the target only, `click` activates. */
+    private pressedTarget: StripRow | "toggle" | undefined;
 
     constructor(
         getRows: () => StripRow[],
         theme: StripTheme,
         onSelect: (job: Job) => void,
-        onToggle: () => void
+        onToggle: () => void,
+        isExpanded: () => boolean
     ) {
         this.getRows = getRows;
         this.theme = theme;
         this.onSelect = onSelect;
         this.onToggle = onToggle;
+        this.isExpanded = isExpanded;
+    }
+
+    /**
+     * Rows to draw, plus the toggle line when one applies.
+     *
+     * render() and hitAt() BOTH go through here, so the drawn layout and the
+     * hit-test can never disagree about which rows are visible. That
+     * inconsistency is exactly the bug class that produced the press/click
+     * double-fire and the unreachable-rows counter.
+     *
+     * Collapsed shows the first `STRIP_VISIBLE_LINES × columns` running rows.
+     * Stalled and failed ride along WITHOUT consuming that budget, so healthy
+     * work can never squeeze out an outstanding decision. Completed and killed
+     * are expanded-only.
+     */
+    private layout(width: number): { rows: StripRow[]; toggle: string | undefined } {
+        const all = this.getRows();
+        const expanded = this.isExpanded();
+        const budget = STRIP_VISIBLE_LINES * columnCount(width);
+
+        let runningSeen = 0;
+        const rows = expanded
+            ? all
+            : all.filter((row) => {
+                  if (row.kind === "toggle") return false;
+                  if (row.state === "stalled" || row.state === "failed") return true;
+                  if (row.state === "running") return ++runningSeen <= budget;
+                  return false;
+              });
+
+        let toggle: string | undefined;
+        if (!expanded) {
+            const hidden = all.length - rows.length;
+            if (hidden > 0) toggle = `▾ +${hidden} more`;
+        } else if (all.length > budget) {
+            toggle = "▴ collapse";
+        }
+        return { rows, toggle };
     }
 
     render(width: number): string[] {
-        const rows = this.getRows();
-        if (rows.length === 0) return [];
-
-        // The toggle always sits last and spans the full width, so it is not
-        // part of the grid.
-        const last = rows[rows.length - 1];
-        const toggle = last.kind === "toggle" ? last : undefined;
-        const jobs = toggle ? rows.slice(0, -1) : rows;
+        const { rows, toggle } = this.layout(width);
+        if (rows.length === 0 && toggle === undefined) return [];
 
         const cols = columnCount(width);
         const cw = cellWidth(width);
         const contentW = Math.max(1, cw - STRIP_GAP);
 
         const lines: string[] = [];
-        for (let i = 0; i < jobs.length; i += cols) {
+        for (let i = 0; i < rows.length; i += cols) {
             let line = "";
-            for (let c = 0; c < cols && i + c < jobs.length; c++) {
-                line += padTo(this.renderJob(jobs[i + c] as StripJobRow, contentW), cw);
+            for (let c = 0; c < cols && i + c < rows.length; c++) {
+                line += padTo(this.renderJob(rows[i + c] as StripJobRow, contentW), cw);
             }
             lines.push(line.replace(/ +$/, ""));
         }
 
-        if (toggle) lines.push(truncateToWidth(this.theme.fg("dim", toggle.text), width));
+        // The toggle spans the full width on its own line, outside the grid.
+        if (toggle) lines.push(truncateToWidth(this.theme.fg("dim", toggle), width));
         return lines;
     }
 
@@ -167,28 +206,23 @@ class StripComponent implements StripWidgetComponent {
     }
 
     /**
-     * Map a mouse position to a row index.
+     * Map a mouse position to whatever is under it.
      *
-     * Columns change this mapping: `y` is now a LINE and `x` selects the cell
+     * Columns change this mapping: `y` is a LINE and `x` selects the cell
      * within it. The toggle spans the full width on its own line, so it is
      * matched by line rather than by cell.
      */
-    private rowIndexAt(event: StripMouseEvent): number | undefined {
-        const rows = this.getRows();
-        if (rows.length === 0) return undefined;
-
-        const hasToggle = rows[rows.length - 1].kind === "toggle";
-        const jobCount = hasToggle ? rows.length - 1 : rows.length;
-
+    private hitAt(event: StripMouseEvent): StripRow | "toggle" | undefined {
+        const { rows, toggle } = this.layout(event.width);
         const cols = columnCount(event.width);
         const cw = cellWidth(event.width);
-        const jobLines = Math.ceil(jobCount / cols);
+        const jobLines = Math.ceil(rows.length / cols);
 
         if (event.y >= jobLines) {
-            return hasToggle && event.y === jobLines ? rows.length - 1 : undefined;
+            return toggle !== undefined && event.y === jobLines ? "toggle" : undefined;
         }
         const index = event.y * cols + Math.floor(event.x / cw);
-        return index < jobCount ? index : undefined;
+        return index < rows.length ? rows[index] : undefined;
     }
 
     handleMouse(event: StripMouseEvent): StripMouseResult | undefined {
@@ -198,22 +232,20 @@ class StripComponent implements StripWidgetComponent {
         if (event.button !== "left") return undefined;
         if (event.type !== "press" && event.type !== "click") return undefined;
 
-        // Record the resolved ROW index on press, not the raw line: the layout
-        // is recomputed from width, so a stale y could point at another cell.
+        // Record the resolved TARGET on press, not the raw coordinates: the
+        // layout is derived from width, so stale coordinates could resolve to a
+        // different cell on release.
         if (event.type === "press") {
-            this.pressedIndex = this.rowIndexAt(event);
+            this.pressedTarget = this.hitAt(event);
             return { handled: true };
         }
 
-        const index = this.pressedIndex ?? this.rowIndexAt(event);
-        this.pressedIndex = undefined;
-        if (index === undefined) return undefined;
+        const target = this.pressedTarget ?? this.hitAt(event);
+        this.pressedTarget = undefined;
+        if (target === undefined) return undefined;
 
-        const row = this.getRows()[index];
-        if (!row) return undefined;
-
-        if (row.kind === "toggle") this.onToggle();
-        else this.onSelect(row.job);
+        if (target === "toggle") this.onToggle();
+        else this.onSelect(target.job);
         return { handled: true };
     }
 
@@ -225,22 +257,24 @@ class StripComponent implements StripWidgetComponent {
 /**
  * Build the widget factory for `setWidget`'s component overload.
  *
- * @param getRows  Live row supplier, read on every render.
- * @param theme    Pi theme, used for semantic slot colours.
- * @param onSelect Invoked with the clicked job row.
- * @param onToggle Invoked when the collapse/expand line is clicked.
- * @param onHandle Receives the TUI handle so the caller can request renders.
+ * @param getRows    Live row supplier, read on every render.
+ * @param theme      Pi theme, used for semantic slot colours.
+ * @param onSelect   Invoked with the clicked job row.
+ * @param onToggle   Invoked when the collapse/expand line is clicked.
+ * @param isExpanded Whether the strip is currently expanded.
+ * @param onHandle   Receives the TUI handle so the caller can request renders.
  */
 export function createStripWidget(
     getRows: () => StripRow[],
     theme: StripTheme,
     onSelect: (job: Job) => void,
     onToggle: () => void,
+    isExpanded: () => boolean,
     onHandle: (tui: StripTui) => void
 ): (tui: StripTui, theme: StripTheme) => StripWidgetComponent {
     return (tui: StripTui, factoryTheme: StripTheme) => {
         onHandle(tui);
-        return new StripComponent(getRows, factoryTheme ?? theme, onSelect, onToggle);
+        return new StripComponent(getRows, factoryTheme ?? theme, onSelect, onToggle, isExpanded);
     };
 }
 
