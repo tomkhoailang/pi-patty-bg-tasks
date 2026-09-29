@@ -562,14 +562,11 @@ was clearly working:
 2. A tool that gates progress on `isatty()` — npm, pnpm, vite, webpack, jest,
    cargo-nextest, etc. — prints nothing when stdout is a file.
 
-`src/background-command.ts` normalizes the command at the **background-at-spawn**
-sites only (`bash-bg.ts`, and `bash.ts` when `run_in_background` is set), so an
-ordinary fast foreground `git log | head` keeps its exact semantics:
+`src/background-command.ts` decides the spawn **shape** at the
+**background-at-spawn** sites (`bash-bg.ts`, and `bash.ts` when
+`run_in_background` is set). The command text itself is **never rewritten** —
+see Change 13, which removed the original strip/reject policy:
 
-- **Strip** a trailing finite `| tail …` (redundant — pi already tails the log).
-- **Reject** `| head`/`| sort`/`| uniq`/`| jq` with guidance: they change which
-  lines exist, and `head` also SIGPIPEs the producer.
-- Leave streamers alone: `tail -f`/`tail -F`, `grep --line-buffered`.
 - **PTY by default** when `script(1)` is available: every background job spawns
   via `script -qefc <cmd> /dev/null` with an *unattended* env (`PAGER=cat`,
   `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `DEBIAN_FRONTEND=noninteractive`) so a
@@ -589,8 +586,8 @@ ordinary fast foreground `git log | head` keeps its exact semantics:
 
 Known residuals (documented, not fixed): a tool that buffers internally and
 ignores libc (some Node CLIs) stays quiet off a PTY unless the command opts in;
-a long *foreground* `cmd | tail` that later auto-backgrounds was already piped at
-spawn and is not rewritten.
+a command that ends in a buffering sink (`| tail -80`) produces no live output by
+its own semantics — accepted trade-off of Change 13.
 
 `FORK.md` note: the `pty` flag is per-call (`bash_bg`/`run_in_background`); auto-
 PTY covers the common dev/build/test runners.
@@ -692,6 +689,29 @@ a `timeout: 240` call kept a 27 s command in the foreground for the full 240 s.
 The timer (and its result message) now use `DEFAULT_TIMEOUT_MS` (15 s,
 `PI_PATTY_BG_TIMEOUT_MS` to override). The tool's `timeout` bounds only how long
 the job may RUN once backgrounded.
+
+## Change 13 — the strip/reject policy is removed
+
+Rewriting the caller's pipeline to save the live view created more problems than
+it solved: once `| tail -8` was stripped the agent no longer knew how much of the
+log to read, which forced a whole read-window / deferred-sink design to
+compensate. Removed entirely: the background command now runs **verbatim**.
+
+- Deleted from `background-command.ts`: `prepareBackgroundCommand`,
+  `REJECT_SINKS`, `BUFFERING_SINK_GUIDANCE`, `PreparedBackgroundCommand`.
+- Both spawn sites (`bash-bg.ts`, `bash.ts` spawnBackground) pass the caller's
+  command straight through; the `(Removed \`| tail\` …)` ack clause is gone too, so
+  there is no prompt injection either.
+- `| head` / `| sort` / `| uniq` / `| jq` are no longer blocked, and SIGPIPE
+  semantics are the command's own.
+- Kept: PTY selection (`ptyArgv`/`ptyEnv`/`UNATTENDED_ENV`) and the
+  `firstRealProgram`/`prefersPty` classifier — spawn SHAPE, not command text.
+
+Consequence, accepted: a command ending in a buffering sink shows nothing live
+until EOF. The activity-based quiet watcher (Change 8) already covers that case
+with a "quiet" notice, so nothing is silent — it just isn't proxied through a
+rewritten pipeline any more. One log, one read (`jobs output` = last 12 000 bytes
+of exactly what the command printed).
 
 ## Environment override
 

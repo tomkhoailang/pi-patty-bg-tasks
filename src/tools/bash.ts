@@ -29,7 +29,7 @@ import {
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
 import { streamLog } from "../output.ts";
 import {
-    prepareBackgroundCommand, ptyArgv, ptyEnv,
+    ptyArgv, ptyEnv,
 } from "../background-command.ts";
 import {
     add,
@@ -326,17 +326,15 @@ function spawnBackground(args: {
     const id = nextJobId(args.reg);
     const logPath = logPathFor(id);
 
-    // Liveness: strip/reject buffering sinks, then pick file-fd vs PTY so the log
-    // shows output while running (see background-command.ts).
-    const prepared = prepareBackgroundCommand(args.command);
-    // Default: run under a PTY whenever `script` is available (TTY-plugin parity).
-    // `pty: false` forces plain file-fd output.
-    const ptyArgs = args.pty === false ? null : ptyArgv(prepared.command);
+    // Command runs VERBATIM — never rewritten (see background-command.ts). The
+    // only choice is the spawn shape: PTY when `script` is available, since that
+    // is what lets TTY-gated tools (npm/vite/jest/…) stream progress.
+    const ptyArgs = args.pty === false ? null : ptyArgv(args.command);
     const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? ptyEnv() : {}) };
 
     const spawned = ptyArgs
         ? spawnWithFileOutput({ file: "script", fileArgs: ptyArgs, cwd: args.cwd, logPath, env })
-        : spawnWithFileOutput({ command: prepared.command, cwd: args.cwd, logPath, env });
+        : spawnWithFileOutput({ command: args.command, cwd: args.cwd, logPath, env });
 
     const job = createRunningJob({
         id,
@@ -354,8 +352,7 @@ function spawnBackground(args: {
             textBlock(
                 `Command running in background with ID: ${id}.${
                     args.name ? ` Name: ${args.name}.` : ""
-                } Output is being written to: ${logPath}` +
-                `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}`
+                } Output is being written to: ${logPath}`
             ),
         ],
         details: undefined,

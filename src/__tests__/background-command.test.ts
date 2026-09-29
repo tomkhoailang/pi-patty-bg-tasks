@@ -2,7 +2,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    prepareBackgroundCommand,
     prefersPty,
     firstRealProgram,
     ptyArgv,
@@ -10,44 +9,10 @@ import {
     UNATTENDED_ENV,
 } from "../background-command.ts";
 
-describe("prepareBackgroundCommand", () => {
-    test("leaves a plain command untouched", () => {
-        assert.deepEqual(prepareBackgroundCommand("cargo check"), { command: "cargo check" });
-    });
-
-    test("strips a trailing finite tail (redundant with the log tail)", () => {
-        assert.deepEqual(prepareBackgroundCommand("cargo check | tail -80"), {
-            command: "cargo check",
-            stripped: "tail",
-        });
-        assert.deepEqual(prepareBackgroundCommand("make 2>&1 | tail"), {
-            command: "make 2>&1",
-            stripped: "tail",
-        });
-    });
-
-    test("keeps a streaming tail -f", () => {
-        assert.deepEqual(prepareBackgroundCommand("tail -f app.log"), { command: "tail -f app.log" });
-        assert.deepEqual(prepareBackgroundCommand("tail -F app.log | grep x"), {
-            command: "tail -F app.log | grep x",
-        });
-    });
-
-    test("rejects semantics-changing sinks", () => {
-        for (const cmd of ["x | head -5", "x | sort", "x | uniq -c", "x | jq .a"]) {
-            assert.throws(() => prepareBackgroundCommand(cmd), /Blocked:/, cmd);
-        }
-    });
-
-    test("ignores pipes inside quotes", () => {
-        assert.deepEqual(prepareBackgroundCommand("echo 'a|b'"), { command: "echo 'a|b'" });
-        assert.deepEqual(prepareBackgroundCommand('printf "x|y"'), { command: 'printf "x|y"' });
-    });
-
-    test("does not split on logical OR (`||`)", () => {
-        assert.deepEqual(prepareBackgroundCommand("a || b"), { command: "a || b" });
-    });
-});
+// NOTE: the strip/reject policy was removed — commands are never rewritten, so
+// there is no `prepareBackgroundCommand` to test. A trailing buffering sink
+// (`| tail -80`) is the command's own semantics. What remains here is the spawn
+// SHAPE choice (PTY vs file-fd).
 
 describe("prefersPty", () => {
     test("true for TTY-gated dev/build/test tools", () => {

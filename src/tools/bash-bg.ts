@@ -13,7 +13,7 @@ import type { BackgroundRegistry } from "../state.ts";
 import { type UiContext } from "../types.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
 import {
-    prepareBackgroundCommand, ptyArgv, ptyEnv,
+    ptyArgv, ptyEnv,
 } from "../background-command.ts";
 import { add, createRunningJob, nextJobId, logPathFor, renderSidebar } from "../registry.ts";
 import {
@@ -66,19 +66,17 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             requireExistingCwd(ctx2.cwd);
             assertJobSlot(reg);
 
-            // Liveness: strip/reject buffering sinks, then pick file-fd vs PTY so the
-            // expanded log shows output while the job runs (see background-command.ts).
-            const prepared = prepareBackgroundCommand(p.command);
-            // Default: run under a PTY whenever `script` is available (TTY-plugin
-            // parity). `pty: false` forces plain file-fd output.
-            const ptyArgs = p.pty === false ? null : ptyArgv(prepared.command);
+            // Command runs VERBATIM — never rewritten (see background-command.ts).
+            // The only choice is the spawn shape: PTY when `script` is available,
+            // which is what makes TTY-gated tools (npm/vite/jest/…) stream.
+            const ptyArgs = p.pty === false ? null : ptyArgv(p.command);
             const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? ptyEnv() : {}) };
 
             const id = nextJobId(reg);
             const logPath = logPathFor(id);
             const spawned = ptyArgs
                 ? spawnWithFileOutput({ file: "script", fileArgs: ptyArgs, cwd: ctx2.cwd, logPath, env })
-                : spawnWithFileOutput({ command: prepared.command, cwd: ctx2.cwd, logPath, env });
+                : spawnWithFileOutput({ command: p.command, cwd: ctx2.cwd, logPath, env });
 
             const job = createRunningJob({
                 id, name: p.name, command: p.command, pid: spawned.pid,
@@ -108,8 +106,7 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             return {
                 content: [textBlock(
                     `Command running in background with ID: ${id}.` +
-                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}` +
-                    `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}`
+                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}`
                 )],
                 details: undefined,
             };
