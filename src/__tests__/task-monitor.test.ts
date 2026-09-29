@@ -59,13 +59,12 @@ describe("TaskMonitor", () => {
         assert.ok(lines.some((l) => l.includes("│"))); // pane divider
     });
 
-    test("filter keys narrow the list; typing searches; esc closes", () => {
+    test("filter tabs narrow the list; typing searches; esc closes", () => {
         const running = job({ id: "job-1-a" });
         const done = job({ id: "job-1-b", status: "completed" });
         let closed = false;
-        const m = new TaskMonitor(makeReg([running, done]), ctx, theme as never, () => {}, () => (closed = true), "all");
+        const m = new TaskMonitor(makeReg([running, done]), ctx, theme as never, () => {}, () => (closed = true), "running");
 
-        m.handleInput("2"); // filter -> running
         m.render(100);
         assert.ok(!m.render(100).join("\n").includes("job-1-b"));
         // Selected running job's output header is shown in the right pane.
@@ -79,6 +78,23 @@ describe("TaskMonitor", () => {
         assert.equal(closed, false);
         m.handleInput("\x1b");
         assert.equal(closed, true);
+    });
+
+    test("every printable key types into the search", () => {
+        const reg = makeReg([
+            job({ id: "job-1-1", name: "remove-me", command: "remove-me" }),
+            job({ id: "job-1-2", name: "cargo build", command: "cargo build" }),
+        ]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        // `c` and `d` used to fire copy/remove; digits used to switch filters.
+        for (const ch of "cd7") m.handleInput(ch);
+        const text = m
+            .render(100)
+            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+            .join("\n");
+        assert.ok(text.includes("Search: cd7"), `typed into the box: ${text}`);
+        assert.ok(!text.includes("remove-me"), "nothing was copied or removed");
+        assert.ok(text.includes("[all]"), "a digit no longer changes the filter");
     });
 
     test("mouse click selects the row under the pointer (frame offset)", () => {
@@ -105,7 +121,7 @@ describe("TaskMonitor", () => {
         ]);
         const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
         // `rgo` is NOT a substring of "cargo build" — it only matches as a
-        // subsequence. (Query chars must avoid x/c/d: those are the action keys.)
+        // subsequence.
         for (const ch of "rgo") m.handleInput(ch);
         const text = m
             .render(100)

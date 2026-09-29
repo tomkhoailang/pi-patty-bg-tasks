@@ -782,6 +782,20 @@ No highlighting of matched characters: `fuzzyMatch` returns only
 `{ matches, score }`, no positions. Writing our own matcher would be needed for
 that.
 
+## Change 18 — actions are buttons only; every printable key is search input
+
+`x`/`c`/`d` (kill/copy/remove) and `1`-`5` (status filters) were single-key
+shortcuts, and they stole keys from the search box: typing `cargo` fired copy and
+remove on the way in, and any digit in a query switched filters. All of them are
+gone. Every printable key now falls through to the query.
+
+In exchange the pills print no key letters (` x kill ` → ` kill `), so the action
+bar reads `kill · copy · remove`, and the filters are reached by clicking the
+`[all] running completed failed killed` tabs or cycling with `⇥`.
+
+Still bound: `esc` (close) · `⇥` (filter) · `⌫` (search) · `↑↓` (list) ·
+`Home`/`End`/`PageUp`/`PageDown` (log).
+
 ## Environment override
 
 ```sh
@@ -794,7 +808,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.38-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.39-pi15
 ```
 
 ## Rebase onto a newer upstream release

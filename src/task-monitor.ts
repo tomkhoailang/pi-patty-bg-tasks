@@ -3,7 +3,7 @@
  *
  *   ╭──────────────────────────────────────────────────────────────╮
  *   │  Task Monitor      ▶ 2 running · ✗ 1 failed         esc ✕     │
- *   │  x kill · c copy · d remove   ↑↓ · ⇥ filter · type to search │
+ *   │  kill · copy · remove    ↑↓ · ⇥ filter · type to search  │
  *   │  Search: ▏                                                   │
  *   │ → ▶ cargo build   ┃  ▶ cargo build --release   running 2m41s │
  *   ╰──────────────────────────────────────────────────────────────╯
@@ -399,18 +399,18 @@ export class TaskMonitor implements Component {
         this.closeRange = { start: visibleWidth(prefix), end: visibleWidth(prefix) + closeW };
         inner.push(prefix + closePill);
 
-        // Clickable action buttons (pills) + key hints. Ranges are inner-x offsets.
+        // Clickable action buttons (pills). Ranges are inner-x offsets.
         const selJob = this.selected();
-        const acts: { key: string; label: string; enabled: boolean; run: () => void }[] = [
-            { key: "x", label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
-            { key: "c", label: "copy", enabled: !!selJob, run: () => this.actCopy() },
-            { key: "d", label: "remove", enabled: !!selJob, run: () => this.actRemove() },
+        const acts: { label: string; enabled: boolean; run: () => void }[] = [
+            { label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
+            { label: "copy", enabled: !!selJob, run: () => this.actCopy() },
+            { label: "remove", enabled: !!selJob, run: () => this.actRemove() },
         ];
         let barLine = "  ";
         const ranges: typeof this.actionRanges = [];
         for (let i = 0; i < acts.length; i++) {
             const a = acts[i]!;
-            const text = ` ${a.key} ${a.label} `;
+            const text = ` ${a.label} `;
             const styled = !a.enabled
                 ? this.bg("selectedBg", this.theme.fg("muted", text))
                 : this.hoveredButton === i
@@ -485,14 +485,10 @@ export class TaskMonitor implements Component {
             this.rebuild();
             return;
         }
-        if (/^[1-5]$/.test(data)) {
-            this.filter = FILTERS[Number(data) - 1]!;
-            this.rebuild();
-            return;
-        }
-        if (data === "x") return void this.actKill();
-        if (data === "c") return void this.actCopy();
-        if (data === "d") return void this.actRemove();
+        // No single-letter or digit shortcuts: EVERY printable key belongs to the
+        // search box, so typing `cargo` cannot fire copy/remove on its way in, and
+        // a query may contain digits (`8080`, `job-1-2`). kill/copy/remove and the
+        // status filters are buttons, and `tab` cycles the filters.
         if (matchesKey(data, "backspace") || data === "\x7f") {
             this.query = this.query.slice(0, -1);
             this.rebuild();
