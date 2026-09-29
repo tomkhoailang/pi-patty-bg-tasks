@@ -380,11 +380,15 @@ export function requestJobDecision(args: {
     pi: ExtensionAPI;
     ctx: UiContext;
     job: Job;
-    timeoutMs: number;
+    /** The budget that just elapsed: the auto-background budget
+     *  (`DEFAULT_TIMEOUT_MS`, since the hand-off is fixed at ~15s), or a bg job's
+     *  own `timeout`. NOT the tool's decision deadline — passing that made the
+     *  toast claim a 300s timeout the hand-off never waited for. */
+    afterMs: number;
 }): void {
     args.reg.pendingDecisionJobId = args.job.id;
     const label = `"${jobLabel(args.job)}"`;
-    const elapsed = formatDuration(args.timeoutMs);
+    const elapsed = formatDuration(args.afterMs);
     args.ctx.ui.notify(`Backgrounded ${label} after ${elapsed}; still running.`, "info");
 }
 

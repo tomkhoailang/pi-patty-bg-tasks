@@ -867,6 +867,24 @@ order is stable:
 
 Note: with chronological order the newest task sits at the BOTTOM of the list.
 
+## Change 23 — the hand-off reports the right budget and names the right wait
+
+Two bugs behind one complaint ("it said 5m0s, and the agent kept polling the log"):
+
+- **The toast reported the tool's `timeout`, not the hand-off budget.**
+  `promoteToBackground()` passed `timeoutMs` (the decision deadline, 300s in the
+  report) into `requestJobDecision`, whose only use of it is the message — so a
+  15s hand-off announced `Backgrounded "…" after 5m0s`. The parameter is now
+  `afterMs` ("the budget that elapsed") and the auto-bg site passes
+  `DEFAULT_TIMEOUT_MS`; the bg tool's own timeout still passes its own value.
+- **The hand-off result invited polling.** It read `still running — check with
+  jobs output if needed` next to a log path. Mid-turn a completion notice cannot
+  arrive at all (`armIdleFlush` returns while `reg.agentBusy`; `noteAgentEnd`
+  flushes as a passive follow-up with "no wake"), so the only correct mid-turn
+  move is `jobs action='attach'` — which awaits `job.donePromise` and does not
+  read the log in a loop. The result now says exactly that, and states the
+  completion notice reports on its own when the turn ends.
+
 ## Environment override
 
 ```sh
@@ -879,7 +897,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.43-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.44-pi15
 ```
 
 ## Rebase onto a newer upstream release

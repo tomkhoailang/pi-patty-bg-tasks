@@ -215,7 +215,10 @@ async function runForeground(args: {
         markStarted(reg);
         startBackgroundJob({ reg, pi, ctx, job, exit: spawned.exit });
         if (reason === "timeout") {
-            requestJobDecision({ reg, pi, ctx, job, timeoutMs });
+            // The elapsed budget is the HAND-OFF one (DEFAULT_TIMEOUT_MS), which is
+            // what actually triggered this — `timeoutMs` is only the deadline for a
+            // later decision and would misreport the toast.
+            requestJobDecision({ reg, pi, ctx, job, afterMs: DEFAULT_TIMEOUT_MS });
         }
     };
 
@@ -285,12 +288,17 @@ async function runForeground(args: {
             promoteToBackground(race.reason);
             const reason =
                 race.reason === "timeout"
-                    ? ` (auto-backgrounded after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)}s; still running — check with jobs output if needed)`
+                    ? ` (auto-backgrounded after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)}s)`
                     : "";
             return {
                 content: [
                     textBlock(
-                        `Process backgrounded as ${id}${reason}\nCommand: ${command}\nPID: ${spawned.pid}\nOutput: ${logPath}`
+                        `Process backgrounded as ${id}${reason}\n` +
+                            `Wait for it: jobs({ action: "attach", jobId: "${id}" }) — blocks until ` +
+                            `it finishes and returns the outcome.\n` +
+                            `Do NOT poll the log or repeat \`jobs output\`: the completion notice reports ` +
+                            `it on its own when the turn ends.\n` +
+                            `Command: ${command}\nPID: ${spawned.pid}\nOutput: ${logPath}`
                     ),
                 ],
                 details: undefined,

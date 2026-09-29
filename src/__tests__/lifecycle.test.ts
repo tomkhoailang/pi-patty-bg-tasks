@@ -199,7 +199,7 @@ void describe("backgroundActiveForeground", () => {
 });
 
 void describe("requestJobDecision", () => {
-    void it("timeout background records pending decision and shows only a toast (no forced turn — CC parity)", () => {
+    void it("reports the budget that ELAPSED, not the decision deadline", () => {
         const reg = new BackgroundRegistry();
         const sent: { customType?: string }[] = [];
         const toasts: string[] = [];
@@ -210,7 +210,7 @@ void describe("requestJobDecision", () => {
             pi: { sendMessage: (msg: { customType?: string }) => sent.push(msg) } as never,
             ctx: { ui: { notify: (m: string) => toasts.push(m) } } as never,
             job,
-            timeoutMs: 15_000,
+            afterMs: 15_000,
         });
 
         assert.equal(reg.pendingDecisionJobId, "job-timeout");
@@ -221,6 +221,9 @@ void describe("requestJobDecision", () => {
         assert.equal(toasts.length, 1);
         assert.match(toasts[0], /Backgrounded/);
         assert.match(toasts[0], /still running/);
+        // The number comes from the elapsed budget. It used to be fed the tool's
+        // `timeout` (e.g. 300s), so a 15s hand-off reported "after 5m0s".
+        assert.match(toasts[0], /after 15s/);
     });
 });
 
