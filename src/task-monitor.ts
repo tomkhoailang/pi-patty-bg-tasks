@@ -19,7 +19,7 @@
  */
 
 import { statSync } from "node:fs";
-import { SelectList, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { SelectList, fuzzyFilter, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Component,
     KeyId,
@@ -217,21 +217,23 @@ export class TaskMonitor implements Component {
     }
 
     private jobs(): Job[] {
-        const q = this.query.toLowerCase();
-        return this.allJobs()
-            .filter((j) => this.filter === "all" || j.status === this.filter)
-            .filter(
-                (j) =>
-                    !q ||
-                    (j.name ?? "").toLowerCase().includes(q) ||
-                    j.command.toLowerCase().includes(q) ||
-                    j.id.toLowerCase().includes(q)
-            )
-            .sort(
+        const base = this.allJobs().filter(
+            (j) => this.filter === "all" || j.status === this.filter
+        );
+        const q = this.query.trim();
+        if (!q) {
+            // No query: the canonical order — live work first, then newest.
+            return base.sort(
                 (a, b) =>
                     Number(b.status === "running") - Number(a.status === "running") ||
                     b.startTime - a.startTime
             );
+        }
+        // fzf-style: every query character must appear IN ORDER, ranked best-first,
+        // with whitespace/slash-separated tokens all required. The haystack is the
+        // same name + command + id triple the old substring search covered, so an
+        // abbreviation like `cgo` finds `cargo build` without it being a substring.
+        return fuzzyFilter(base, q, (j) => `${jobLabel(j)} ${j.command} ${j.id}`);
     }
 
     private buildList(): SelectList {

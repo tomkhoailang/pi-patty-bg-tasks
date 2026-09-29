@@ -768,6 +768,20 @@ that had already finished. It now shows only what still needs eyes:
   branches). The action bar is now `x kill · c copy · d remove`, and the log
   keeps scrolling by page/home/end.
 
+## Change 17 — fuzzy (fzf-style) task search in the monitor
+
+The Task Monitor's search was an exact substring test over name/command/id, so
+typing an abbreviation found nothing. It now uses pi-tui's own matcher
+(`fuzzyFilter` — subsequence, ranked best-first, whitespace/slash-separated
+tokens all required), so `rgo` finds `cargo build` and `cargo/rel` works as two
+tokens. When the query is empty the canonical order returns (live work first,
+then newest); with a query active the ranking decides. The status filter still
+applies first, so `⇥`/`1-5` and fuzzy search compose.
+
+No highlighting of matched characters: `fuzzyMatch` returns only
+`{ matches, score }`, no positions. Writing our own matcher would be needed for
+that.
+
 ## Environment override
 
 ```sh
@@ -780,7 +794,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.37-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.38-pi15
 ```
 
 ## Rebase onto a newer upstream release

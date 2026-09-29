@@ -98,6 +98,23 @@ describe("TaskMonitor", () => {
         assert.ok(sel && sel.includes("two"), sel ?? "(no selected row)");
     });
 
+    test("search is fuzzy, not substring", () => {
+        const reg = makeReg([
+            job({ id: "job-1-1", name: "cargo build", command: "cargo build" }),
+            job({ id: "job-1-2", name: "deploy web", command: "deploy web" }),
+        ]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        // `rgo` is NOT a substring of "cargo build" — it only matches as a
+        // subsequence. (Query chars must avoid x/c/d: those are the action keys.)
+        for (const ch of "rgo") m.handleInput(ch);
+        const text = m
+            .render(100)
+            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+            .join("\n");
+        assert.ok(text.includes("cargo build"), "subsequence match survives");
+        assert.ok(!text.includes("deploy web"), "non-match stays hidden");
+    });
+
     test("the title-bar close button is clickable", () => {
         let closed = false;
         const m = new TaskMonitor(makeReg([job({})]), ctx, theme as never, () => {}, () => (closed = true), "all");
