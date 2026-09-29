@@ -570,12 +570,19 @@ ordinary fast foreground `git log | head` keeps its exact semantics:
 - **Reject** `| head`/`| sort`/`| uniq`/`| jq` with guidance: they change which
   lines exist, and `head` also SIGPIPEs the producer.
 - Leave streamers alone: `tail -f`/`tail -F`, `grep --line-buffered`.
-- **PTY for TTY-gated tools** (auto for a known set, or `pty: true`): spawned via
-  `script -qefc <cmd> /dev/null` with an *unattended* env (`PAGER=cat`,
+- **PTY by default** when `script(1)` is available: every background job spawns
+  via `script -qefc <cmd> /dev/null` with an *unattended* env (`PAGER=cat`,
   `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `DEBIAN_FRONTEND=noninteractive`) so a
-  pager/prompt can never block the job. Linux-only; falls back to file-fd
-  elsewhere.
+  pager/prompt can never block the job. `pty: false` forces plain file-fd output;
+  without `script` the PTY path is skipped and file-fd is used.
+- `prefersPty()` / `firstRealProgram()` classify a command by its **real** program,
+  looking past `VAR=…`, wrappers (`sudo`/`time`/`nohup`/`timeout …`) and leading
+  `cd … &&` steps, so `cd ~/x && npm run dev` reads as `npm`. Used as the fallback
+  classifier and covered by tests.
 - Always sets `PYTHONUNBUFFERED=1`.
+
+**Dependency:** the PTY path needs `script(1)` (util-linux). Fedora split it into
+`util-linux-script` (F42); `setup_pi_agent.sh` installs it when missing.
 
 Known residuals (documented, not fixed): a tool that buffers internally and
 ignores libc (some Node CLIs) stays quiet off a PTY unless the command opts in;
@@ -597,7 +604,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.12-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.13-pi15
 ```
 
 ## Rebase onto a newer upstream release

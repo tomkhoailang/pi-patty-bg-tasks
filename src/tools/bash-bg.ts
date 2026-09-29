@@ -13,7 +13,7 @@ import type { BackgroundRegistry } from "../state.ts";
 import { type UiContext } from "../types.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
 import {
-    prepareBackgroundCommand, prefersPty, ptyArgv, UNATTENDED_ENV,
+    prepareBackgroundCommand, ptyArgv, UNATTENDED_ENV,
 } from "../background-command.ts";
 import { add, createRunningJob, nextJobId, logPathFor, renderSidebar } from "../registry.ts";
 import {
@@ -69,9 +69,9 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             // Liveness: strip/reject buffering sinks, then pick file-fd vs PTY so the
             // expanded log shows output while the job runs (see background-command.ts).
             const prepared = prepareBackgroundCommand(p.command);
-            const ptyArgs = (p.pty ?? prefersPty(prepared.command))
-                ? ptyArgv(prepared.command)
-                : null;
+            // Default: run under a PTY whenever `script` is available (TTY-plugin
+            // parity). `pty: false` forces plain file-fd output.
+            const ptyArgs = p.pty === false ? null : ptyArgv(prepared.command);
             const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? UNATTENDED_ENV : {}) };
 
             const id = nextJobId(reg);
