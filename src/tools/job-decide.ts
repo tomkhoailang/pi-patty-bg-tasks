@@ -68,6 +68,10 @@ export function registerJobDecideTool(
                 }
                 case "keep": {
                     reg.pendingDecisionJobId = undefined;
+                    // Mute THIS silence episode (not the job): the watcher stops
+                    // asking until fresh output starts a new one. Without this,
+                    // "keep" would just re-arm the same nag.
+                    job.quietSilenced = true;
                     return {
                         content: [
                             textBlock(

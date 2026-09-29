@@ -210,10 +210,11 @@ async function attachAction(
     if (!job) throw new Error(`Job not found: ${jobId}`);
     const label = jobLabel(job);
 
-    const skipWait =
-        reg.pendingDecisionJobId === job.id && job.status === "running";
-
-    if (job.status === "running" && waitForCompletion && !skipWait) {
+    // Attach waits for a running job, always. It used to skip the wait when the
+    // job had a "pending decision", which made attach a silent no-op for exactly
+    // the jobs an agent most needs to wait on (auto-backgrounded ones) and pushed
+    // it back to polling.
+    if (job.status === "running" && waitForCompletion) {
         ensureCompletionPromise(job);
         // We're actively following this job — suppress its separate completion
         // notice so the attach result is the single notification. Undone on the

@@ -885,6 +885,31 @@ Two bugs behind one complaint ("it said 5m0s, and the agent kept polling the log
   read the log in a loop. The result now says exactly that, and states the
   completion notice reports on its own when the turn ends.
 
+## Change 24 — silence is not an event; mid-turn injection; notify policy
+
+Implements §8 Q1/Q3/Q5 of `docs/antigravity-background-tasks.md`.
+
+- **Silence is not an event.** The 60 s "no output" push is gone. Two EDGES speak,
+  once per silence episode: a **prompt-like tail** (the job is blocked, and its stdin
+  is `/dev/null`, so it can never be answered — reported at the soft threshold) and
+  **silence past the long threshold** ("is this stuck?"). Fresh output re-arms both,
+  and the episode is recorded on the job as `quietSilenced` so `job_decide keep`
+  mutes **that episode** instead of re-arming the same nag. Silence still never
+  kills. A dev server that prints once and then serves traffic costs zero messages.
+- **Mid-turn injection.** Notices are no longer parked until `agent_end`. A steer
+  queued while the agent runs is delivered before its next LLM call — a call it was
+  going to make anyway — so mid-turn news costs no extra turn (`pickDelivery`).
+  Waking an IDLE agent spends a turn, so it is reserved for terminal notices;
+  decisions use the same rule.
+- **`PI_PATTY_BG_NOTIFY=off|error|result|concise|all`** (default `concise`) gates the
+  notice channel only — the banner and the monitor's history are untouched.
+- `jobs attach` no longer skips the wait for "pending decision" jobs: it was a silent
+  no-op for exactly the jobs an agent most needs to wait on (auto-backgrounded ones)
+  and pushed it back to polling.
+
+No progress-watch channel is shipped, so the rate-budget that would govern it (1 per
+15 s, auto-disable after 3 drops) is deliberately **not** built — see §8 Q2.
+
 ## Environment override
 
 ```sh
@@ -897,7 +922,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.44-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.45-pi15
 ```
 
 ## Rebase onto a newer upstream release

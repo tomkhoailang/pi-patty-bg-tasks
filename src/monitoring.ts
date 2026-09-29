@@ -1,13 +1,20 @@
 /**
  * Activity-based quiet detection for background jobs.
  *
- * Watches a job's log file and tells the agent when a *running* job has gone
- * quiet — no output for a while — so the user/agent can decide to wait, check,
- * or kill. Output silence alone never kills a job; only the MAX_LOG_BYTES
- * oversize guard terminates. The interactive-prompt regex is a hint in the
- * notice, not the trigger: a job that stops printing may be working (a long
- * link step), blocked on input, or genuinely hung, and only the user/agent can
- * tell those apart.
+ * Watches a job's log file and, when a *running* job goes quiet, decides whether
+ * that is worth saying out loud. Per docs/antigravity-background-tasks.md §8/§10,
+ * the answer is almost always no:
+ *
+ *   - **Silence is not an event.** Nothing is pushed while a job is merely quiet
+ *     — a long link step, a dev server, a blocked read all look identical, and
+ *     neither Claude Code nor Antigravity notifies on silence at all.
+ *   - **Two edges do speak**, once per episode: silence that reaches
+ *     QUIET_LONG_MS (the "is this thing stuck?" question), and silence whose tail
+ *     looks like an interactive prompt (the `requires_action` case — actionable
+ *     right now, because stdin is /dev/null and it can never be answered).
+ *   - **Silence never kills.** Only the MAX_LOG_BYTES oversize guard terminates.
+ *   - **Fresh output re-arms everything**, so a heartbeat is a new episode, not a
+ *     repeat of the old one.
  *
  * Progress streaming lives in output.ts (pollFileTail).
  */
@@ -17,13 +24,17 @@ import { setTimeout as nodeSetTimeout } from "node:timers";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     DELIVER_FOLLOWUP,
+    DELIVER_STEER,
     EVENT,
     MAX_LOG_BYTES,
     QUIET_LONG_MS,
     QUIET_MS,
     STALL_CHECK_INTERVAL_MS,
     STALL_TAIL_BYTES,
+    type Job,
 } from "./types.ts";
+import { policyAllowsDecision } from "./notify-policy.ts";
+
 
 /**
  * Watch a running job for output silence. When the log file:
@@ -39,21 +50,35 @@ export function watchStalls(args: {
     command: string;
     logPath: string;
     pi: ExtensionAPI;
+    /** The registry job, when available: lets the watcher record that this
+     *  silence episode has been reported (`quietSilenced`) instead of keeping
+     *  that state privately, so `job_decide keep` can mute the same episode. */
+    job?: Job;
     onOversize?: () => void;
     /** Skip the quiet watch (used for monitors, which stream their own events,
      *  so a quiet tail is normal rather than a stall). */
-    disableQuietWatch?: boolean;
-    /** Skip the oversize auto-kill (used for persistent monitors). */
+    disableQuietWatch?: boolean;    /** Skip the oversize auto-kill (used for persistent monitors). */
     disableOversizeKill?: boolean;
-    /** Called once when the job first goes quiet, so callers can mark it in the
-     *  UI (the quiet notice itself is one-shot per episode). */
+    /** Called on every tick where the job is quiet, so callers can mark it in
+     *  the UI (the strip shows a warning row). Purely local: no message. */
     onQuiet?: () => void;
+    /** Delivery for the two messages this watcher may send (oversize notice,
+     *  decision event). Supplied by the caller, which knows whether the agent is
+     *  mid-turn — mid-turn injection needs no turn of its own. Defaults to the
+     *  passive follow-up. */
+    deliver?: () => typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP;
+    /** Threshold overrides, in ms. Defaults to QUIET_MS / QUIET_LONG_MS; tests
+     *  drive the window instead of waiting a minute. */
+    quietMs?: number;
+    quietLongMs?: number;
+    /** Tick interval override (defaults to STALL_CHECK_INTERVAL_MS). */
+    intervalMs?: number;
 }): () => void {
     let lastSize = 0;
     let lastGrowth = Date.now();
-    let quietNotified = false;
-    let quietLongNotified = false;
     let cancelled = false;
+    const quietMs = args.quietMs ?? QUIET_MS;
+    const quietLongMs = args.quietLongMs ?? QUIET_LONG_MS;
 
     const timer = nodeSetTimeout(function tick() {
         if (cancelled) return;
@@ -66,37 +91,58 @@ export function watchStalls(args: {
                 args.pi.sendMessage(
                     {
                         customType: EVENT.stall,
-                        content: `⚠️ Background job ${args.jobId} exceeded ${MAX_LOG_BYTES / (1024 * 1024)} MiB output. Terminated.`,
+                        content: `Background job ${args.jobId} exceeded ${MAX_LOG_BYTES / (1024 * 1024)} MiB of output and was terminated.`,
                         display: true,
                         details: { jobId: args.jobId, logPath: args.logPath, command: args.command },
                     },
-                    DELIVER_FOLLOWUP
+                    args.deliver?.() ?? DELIVER_FOLLOWUP
                 );
                 return;
             }
 
             if (size > lastSize) {
-                // Producing — any quiet episode ends here and its notices re-arm.
+                // Producing: the quiet episode is over. Fresh output re-arms the
+                // watch, so the NEXT silence is a new decision, not a repeat.
                 lastSize = size;
                 lastGrowth = Date.now();
-                quietNotified = false;
-                quietLongNotified = false;
-            } else if (!args.disableQuietWatch) {
-                const quietFor = Date.now() - lastGrowth;
-                if (!quietLongNotified && quietFor >= QUIET_LONG_MS) {
-                    quietLongNotified = true;
-                    sendQuietLong(args.pi, args.jobId, args.command, args.logPath, quietFor);
-                } else if (!quietNotified && quietFor >= QUIET_MS) {
-                    quietNotified = true;
-                    args.onQuiet?.();
-                    sendQuiet(args.pi, args.jobId, args.command, args.logPath, quietFor);
+                if (args.job) args.job.quietSilenced = false;
+                timer.refresh();
+                return;
+            }
+
+            if (args.disableQuietWatch) {
+                timer.refresh();
+                return;
+            }
+
+            const quietFor = Date.now() - lastGrowth;
+            if (quietFor >= quietMs) args.onQuiet?.();
+
+            // One decision per silence episode, and only when it is actionable:
+            // either the job is clearly waiting for input, or it has been quiet
+            // long enough that "keep waiting or discard" is the real question.
+            const alreadyReported = args.job?.quietSilenced === true;
+            if (!alreadyReported && quietFor >= quietMs && policyAllowsDecision()) {
+                const tail = tailOf(args.logPath, STALL_TAIL_BYTES);
+                const blocked = tail.length > 0 && looksLikePrompt(tail);
+                if (blocked || quietFor >= quietLongMs) {
+                    if (args.job) args.job.quietSilenced = true;
+                    sendDecision(
+                        args.pi,
+                        args.jobId,
+                        args.command,
+                        args.logPath,
+                        quietFor,
+                        blocked,
+                        args.deliver?.() ?? DELIVER_FOLLOWUP
+                    );
                 }
             }
         } catch {
             /* Log may not exist yet — retry next tick. */
         }
         timer.refresh();
-    }, STALL_CHECK_INTERVAL_MS);
+    }, args.intervalMs ?? STALL_CHECK_INTERVAL_MS);
     timer.unref();
 
     return () => {
@@ -147,54 +193,32 @@ function tailOf(logPath: string, bytes: number): string {
     }
 }
 
-function sendQuiet(
+function sendDecision(
     pi: ExtensionAPI,
     jobId: string,
     command: string,
     logPath: string,
-    quietForMs: number
-): void {
-    const secs = Math.round(quietForMs / 1000);
-    const tail = tailOf(logPath, STALL_TAIL_BYTES);
-    const promptHint = tail && looksLikePrompt(tail)
-        ? "\n⤷ The last line looks like an interactive prompt — it may be blocked on input."
-        : "";
-    const body =
-        `⏸ Background job ${jobId} has produced no output for ${secs}s (still running).\n` +
-        `Command: ${command}\n` +
-        (tail ? `Last output:\n${tail}\n` : "") +
-        `— waiting for output. \`jobs output ${jobId}\` to check, \`jobs kill ${jobId}\` to stop.` +
-        promptHint;
-
-    pi.sendMessage(
-        {
-            customType: EVENT.stall,
-            content: body,
-            display: true,
-            details: { jobId, logPath, command },
-        },
-        DELIVER_FOLLOWUP
-    );
-}
-
-function sendQuietLong(
-    pi: ExtensionAPI,
-    jobId: string,
-    command: string,
-    logPath: string,
-    quietForMs: number
+    quietForMs: number,
+    blocked: boolean,
+    deliver: typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP
 ): void {
     const mins = Math.round((quietForMs / 60_000) * 10) / 10;
+    const tail = blocked ? tailOf(logPath, STALL_TAIL_BYTES) : "";
+    const head = blocked
+        ? `Background job ${jobId} looks blocked on input — its stdin is /dev/null, so it cannot be answered.`
+        : `Background job ${jobId} has been quiet for ${mins}m (still running).`;
     pi.sendMessage(
         {
             customType: EVENT.stall,
             content:
-                `⏸ Background job ${jobId} has been quiet for ${mins}m (still running).\n` +
+                `${head}\n` +
                 `Command: ${command}\n` +
-                `Decide: \`job_decide ${jobId} keep|kill|check\`.`,
+                (tail ? `Last output:\n${tail}\n` : "") +
+                `Decide: \`job_decide ${jobId} keep|kill|check\` ` +
+                `(keep = stop asking about this silence; fresh output starts a new episode).`,
             display: true,
             details: { jobId, logPath, command },
         },
-        DELIVER_FOLLOWUP
+        deliver
     );
 }

@@ -112,14 +112,18 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.ok(nudges.some((n) => n.includes('"job-1-2"')));
     });
 
-    void it("does not flush mid-turn even past the idle window", async () => {
-        const { reg, pi, ctx, messages } = harness();
+    void it("injects mid-turn instead of holding to the turn boundary", async () => {
+        const { reg, pi, ctx, messages, deliverOptions } = harness();
         noteAgentStart(reg, pi as never, ctx);
         enqueueFinished(reg, pi as never, ctx, mkJob({}));
         await new Promise((r) => setTimeout(r, 600));
-        assert.equal(messages.length, 0, "held until the turn ends, no idle-timer flush");
+        // §8 Q3: a steer queued while the agent runs lands before its next LLM
+        // call — a call it was already going to make — so mid-turn news costs no
+        // extra turn and must NOT be parked until agent_end.
+        assert.equal(messages.length, 1, "injected during the turn");
+        assert.equal(deliverOptions[0]?.deliverAs, "steer");
         noteAgentEnd(reg, pi as never, ctx);
-        assert.equal(messages.length, 1);
+        assert.equal(messages.length, 1, "nothing left to flush at the boundary");
     });
 
     void it("while idle, a finish flushes via the fallback timer (coalesced)", async () => {
@@ -138,19 +142,19 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(nudges.length, 0);
     });
 
-    void it("noteAgentStart drains stranded notices (guard), then holds new ones for the turn", async () => {
+    void it("noteAgentStart drains stranded notices, then injects new ones mid-turn", async () => {
         const { reg, pi, ctx, messages } = harness();
         // Simulate notices left pending by a prior turn that threw before agent_end.
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-stranded" }));
         noteAgentStart(reg, pi as never, ctx); // drains the stranded notice up front
         assert.equal(messages.length, 1, "stranded notice flushed at turn start");
 
-        // New finishes during this turn are held until it ends.
+        // New finishes during this turn are injected into the turn, not parked.
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-new" }));
         await new Promise((r) => setTimeout(r, 600));
-        assert.equal(messages.length, 1, "new notice held for the turn");
+        assert.equal(messages.length, 2, "new notice injected mid-turn");
         noteAgentEnd(reg, pi as never, ctx);
-        assert.equal(messages.length, 2);
+        assert.equal(messages.length, 2, "nothing left for the turn boundary");
     });
 
     void it("only failed jobs carry an output-read nudge (completed are bare)", () => {

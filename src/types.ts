@@ -22,11 +22,37 @@ export const DEFAULT_TIMEOUT_MS =
 export const QUICK_COMPLETION_MS = 2_000;
 export const FOREGROUND_TAIL_BYTES = 4_096;
 export const STALL_CHECK_INTERVAL_MS = 5_000;
-/** Quiet (no-output) watch thresholds for a running background job. The soft
- *  one emits a single "no output for Ns" notice (cleared when output resumes);
- *  the long one escalates to a keep/kill/check decision prompt. Output silence
- *  alone never kills a job. Override with PI_PATTY_BG_QUIET_MS /
- *  PI_PATTY_BG_QUIET_LONG_MS. */
+
+// --- Notification policy (see docs/antigravity-background-tasks.md §8) -----
+/**
+ * How much background-job news reaches the agent. Mirrors Hermes' `display.
+ * background_process_notifications`, because the research there and in Claude
+ * Code both converge on "completion-only by default, watching opt-in".
+ *
+ *   off      nothing
+ *   error    terminal notices, failures only
+ *   result   all terminal notices
+ *   concise  (default) terminal notices + decision events
+ *   all      concise + watches (quiet/update pushes)
+ */
+export type NotifyPolicy = "all" | "concise" | "result" | "error" | "off";
+const ENV_NOTIFY = (process.env.PI_PATTY_BG_NOTIFY ?? "").toLowerCase();
+export const NOTIFY_POLICY: NotifyPolicy =
+    ENV_NOTIFY === "all" || ENV_NOTIFY === "concise" || ENV_NOTIFY === "result" ||
+    ENV_NOTIFY === "error" || ENV_NOTIFY === "off"
+        ? (ENV_NOTIFY as NotifyPolicy)
+        : "concise";
+
+/** Pushes about a job's *progress* (not its end) are capped: at most one per
+ *  window, and watching switches itself off after this many consecutive drops —
+ *  the same shape Hermes uses for `watch_patterns`. */
+/** Quiet (no-output) thresholds for a running background job. Silence is NOT an
+ *  event: nothing is pushed merely because output stopped. Two edges do speak,
+ *  once per episode — silence whose tail looks like an interactive prompt (the
+ *  job is blocked, and its stdin is /dev/null so it can never be answered), and
+ *  silence that reaches the long threshold ("is this stuck?"). Fresh output
+ *  re-arms both. Silence alone never kills a job. Override with
+ *  PI_PATTY_BG_QUIET_MS / PI_PATTY_BG_QUIET_LONG_MS. */
 const ENV_QUIET_MS = Number(process.env.PI_PATTY_BG_QUIET_MS);
 export const QUIET_MS =
     Number.isFinite(ENV_QUIET_MS) && ENV_QUIET_MS > 0 ? ENV_QUIET_MS : 60_000;
@@ -92,6 +118,10 @@ export interface Job {
     /** Set by the stall watcher when output stopped growing and the tail looks
      *  like an interactive prompt. Read by the strip to show a warning state. */
     stalled?: boolean;
+    /** Set once this silence episode has been reported (or the agent answered
+     *  `job_decide keep`). Fresh output clears it, so the next silence is a new
+     *  episode. Silence is an EDGE, never a repeating notice. */
+    quietSilenced?: boolean;
     /** Defaults to "shell" when absent (back-compat with persisted jobs). */
     kind?: JobKind;
     /** Transient teardown hook (follower + ws socket). Never persisted. */

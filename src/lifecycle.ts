@@ -23,7 +23,7 @@ import { killProcessTree, processExists } from "./spawn.ts";
 import { LOG_DIR, atConcurrencyLimit, forget, renderSidebar } from "./registry.ts";
 import { clearRuntimeJob, reapOrphanProcessGroup } from "./runtime.ts";
 import { watchStalls } from "./monitoring.ts";
-import { enqueueFinished } from "./notify.ts";
+import { enqueueFinished, pickDelivery } from "./notify.ts";
 import { formatDuration, jobLabel } from "./format.ts";
 
 // --- Background-job orchestration ----------------------------------------
@@ -66,10 +66,16 @@ export function startBackgroundJob(args: {
         command: args.job.command,
         logPath: args.job.logPath,
         pi: args.pi,
+        // The registry job, so a reported silence episode is recorded on the job
+        // itself and `job_decide keep` can mute the same episode.
+        job: args.job,
         disableQuietWatch: args.disableQuietWatch,
         disableOversizeKill: args.disableOversizeKill,
         onOversize: () => terminateJobSilently(args.reg, args.job),
         onQuiet: () => { args.job.stalled = true; },
+        // A decision is the one push the agent cannot pull for itself, so it is
+        // worth a turn when the agent is otherwise idle (§8 Q3/Q5).
+        deliver: () => pickDelivery(args.reg, { wakeWhenIdle: true }),
     });
     jobAc.signal.addEventListener("abort", cancelStall, { once: true });
     void args.exit.then((code) => {

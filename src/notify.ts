@@ -3,13 +3,13 @@
  *
  * Background jobs and monitors finish at all sorts of times during a long agent
  * turn. Sent individually, their notices queue in Pi and dump as a WALL after
- * the agent's next reply — "10 [job-finished] lines all at once, long after they
- * finished." So instead we accumulate every completion + monitor-terminal notice
- * and flush ONE summary. Mid-turn, the flush fires at **agent_end** as a passive
- * follow-up so a whole turn's worth collapses into one line without spawning an
- * unsolicited follow-up turn. While the agent is idle, a short fallback timer
- * coalesces and flushes instead — AND wakes the agent via a steer, because the
- * user isn't engaged and the banner alone won't get the agent to react.
+ * the agent's next reply. So instead we accumulate every completion +
+ * monitor-terminal notice and flush ONE summary after a short coalescing window.
+ *
+ * Delivery follows docs/antigravity-background-tasks.md §8 Q3: a MID-TURN notice
+ * is injected as a steer, which lands before the agent's next LLM call — a call
+ * it was going to make anyway — so it costs no extra turn. Waking an IDLE agent
+ * does cost one, so it is reserved for terminal notices.
  *
  * Monitor *stream* events (matched log lines) are NOT routed here — they carry
  * data the agent is actively watching and stay live. Only the terminal/status
@@ -24,12 +24,29 @@ import {
     DELIVER_STEER,
     EVENT,
     JOB_FINISH_COALESCE_MS,
+    NOTIFY_POLICY,
     type Job,
     type MonitorEnd,
     type UiContext,
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { formatNotices } from "./notice.ts";
+import { policyAllowsTerminal } from "./notify-policy.ts";
+
+/**
+ * Choose how a notice is delivered (§8 Q3).
+ *
+ * Mid-turn injection is effectively free: a steer is queued and delivered after
+ * the current tool calls, before the next LLM call — no extra turn. Idle, the
+ * only way to be heard is to trigger a turn, so that is spent only when the
+ * caller says the message is worth a turn (`wakeWhenIdle`).
+ */
+export function pickDelivery(
+    reg: BackgroundRegistry,
+    opts: { wakeWhenIdle: boolean }
+): typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP {
+    return reg.agentBusy || opts.wakeWhenIdle ? DELIVER_STEER : DELIVER_FOLLOWUP;
+}
 
 /** Queue a finished job for the next coalesced notice. */
 export function enqueueFinished(
@@ -39,6 +56,10 @@ export function enqueueFinished(
     job: Job
 ): void {
     if (job.outputConsumed) return; // already surfaced via attach
+    // The policy decides whether this class of news reaches the agent at all
+    // (`PI_PATTY_BG_NOTIFY=off|error|result|concise|all`). The banner and the
+    // monitor's history are untouched — only the notice channel is gated.
+    if (!policyAllowsTerminal(job.status, NOTIFY_POLICY)) return;
     // Stamp the finish time now (≈ completion) so the reported duration isn't
     // inflated by however long the notice waits for the turn boundary.
     job.endedAt ??= Date.now();
@@ -53,17 +74,20 @@ export function enqueueMonitorEnd(
     ctx: UiContext,
     end: MonitorEnd
 ): void {
+    if (NOTIFY_POLICY === "off") return;
     reg.pendingMonitorEnds.push(end);
     armIdleFlush(reg, pi, ctx);
 }
 
 /**
- * Arm the fallback flush — but ONLY while the agent is idle. Mid-turn, notices
- * accumulate and flush together at agent_end (see noteAgentEnd), so a long turn
- * full of finishes yields one summary instead of a wall.
+ * Arm the coalescing flush.
+ *
+ * It runs on a short timer REGARDLESS of whether the agent is busy — that is the
+ * point of §8 Q3: while the agent works, the notice is injected into the turn
+ * already in flight instead of being parked until `agent_end`, which is what
+ * used to force the agent to poll if it needed the news sooner.
  */
 function armIdleFlush(reg: BackgroundRegistry, pi: ExtensionAPI, ctx: UiContext): void {
-    if (reg.agentBusy) return;
     if (reg.noticeFlushTimer) return;
     const timer = setTimeout(
         () => flushIdleNotices(reg, pi, ctx),
@@ -109,7 +133,8 @@ export function flushIdleNotices(
     pi: ExtensionAPI,
     ctx: UiContext
 ): void {
-    sendCoalescedNotice(reg, pi, ctx, DELIVER_STEER);
+    // Terminal news is worth a turn when the agent is otherwise idle.
+    sendCoalescedNotice(reg, pi, ctx, pickDelivery(reg, { wakeWhenIdle: true }));
 }
 
 /** Turn-boundary flush: passive follow-up. No wake — the agent just finished
