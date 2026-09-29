@@ -573,7 +573,10 @@ ordinary fast foreground `git log | head` keeps its exact semantics:
 - **PTY by default** when `script(1)` is available: every background job spawns
   via `script -qefc <cmd> /dev/null` with an *unattended* env (`PAGER=cat`,
   `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `DEBIAN_FRONTEND=noninteractive`) so a
-  pager/prompt can never block the job. `pty: false` forces plain file-fd output;
+  pager/prompt can never block the job. The env also forces **`SHELL` to bash**:
+  `script -c` runs the command through `$SHELL`, which may be fish/zsh, so without
+  this a bash-syntax command would break under the PTY (the file-fd path already
+  uses `bash -c`). `pty: false` forces plain file-fd output;
   without `script` the PTY path is skipped and file-fd is used.
 - `prefersPty()` / `firstRealProgram()` classify a command by its **real** program,
   looking past `VAR=…`, wrappers (`sudo`/`time`/`nohup`/`timeout …`) and leading
@@ -622,7 +625,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.14-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.15-pi15
 ```
 
 ## Rebase onto a newer upstream release

@@ -29,7 +29,7 @@ import {
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
 import { streamLog } from "../output.ts";
 import {
-    prepareBackgroundCommand, ptyArgv, UNATTENDED_ENV,
+    prepareBackgroundCommand, ptyArgv, ptyEnv,
 } from "../background-command.ts";
 import {
     add,
@@ -328,7 +328,7 @@ function spawnBackground(args: {
     // Default: run under a PTY whenever `script` is available (TTY-plugin parity).
     // `pty: false` forces plain file-fd output.
     const ptyArgs = args.pty === false ? null : ptyArgv(prepared.command);
-    const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? UNATTENDED_ENV : {}) };
+    const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? ptyEnv() : {}) };
 
     const spawned = ptyArgs
         ? spawnWithFileOutput({ file: "script", fileArgs: ptyArgs, cwd: args.cwd, logPath, env })

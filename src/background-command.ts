@@ -223,15 +223,28 @@ export function ptyArgv(command: string): string[] | null {
 }
 
 function onPath(bin: string): boolean {
+    return findOnPath(bin) !== null;
+}
+
+/** First executable named `bin` on PATH, or null. */
+function findOnPath(bin: string): string | null {
     const path = process.env.PATH ?? "";
     for (const dir of path.split(delimiter)) {
         if (!dir) continue;
+        const candidate = join(dir, bin);
         try {
-            accessSync(join(dir, bin), constants.X_OK);
-            return true;
+            accessSync(candidate, constants.X_OK);
+            return candidate;
         } catch {
             /* keep looking */
         }
     }
-    return false;
+    return null;
+}
+
+/** Env for the PTY path: unattended pagers/prompts plus a bash login shell.
+ *  `script -c` runs the command through `$SHELL`, which may be fish/zsh, so we
+ *  force bash to match the file-fd path (`bash -c <cmd>`). */
+export function ptyEnv(): Record<string, string> {
+    return { ...UNATTENDED_ENV, SHELL: findOnPath("bash") ?? "/bin/bash" };
 }

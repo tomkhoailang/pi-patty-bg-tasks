@@ -6,6 +6,7 @@ import {
     prefersPty,
     firstRealProgram,
     ptyArgv,
+    ptyEnv,
     UNATTENDED_ENV,
 } from "../background-command.ts";
 
@@ -90,5 +91,14 @@ describe("UNATTENDED_ENV", () => {
         assert.equal(UNATTENDED_ENV.PAGER, "cat");
         assert.equal(UNATTENDED_ENV.GIT_PAGER, "cat");
         assert.equal(UNATTENDED_ENV.GIT_TERMINAL_PROMPT, "0");
+    });
+});
+
+describe("ptyEnv", () => {
+    test("forces a bash login shell (script -c otherwise uses $SHELL, e.g. fish)", () => {
+        const env = ptyEnv();
+        assert.ok(env.SHELL.endsWith("bash"), env.SHELL);
+        assert.equal(env.PAGER, "cat");
+        assert.equal(env.GIT_TERMINAL_PROMPT, "0");
     });
 });
