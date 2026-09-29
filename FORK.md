@@ -626,6 +626,8 @@ replacing the empty `openStripPanel` placeholder:
   focusing the pane**; ↑↓/`j`/`k` move the list selection. A 1-column scrollbar
   (`scrollbarTrack` `│` / `scrollbarThumb` `┃`) spans the log viewport when the
   log is longer than the pane, and is **draggable/clickable** to scrub the log.
+  Drag maps the pointer row **absolutely** (release lands where the pointer is)
+  and keeps responding while captured, even if the cursor leaves the 1-cell column.
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
   `esc` close (`q` is a search character, not a close key).
 - **Mouse** — click a row to select it, wheel to scroll the output, and click the
@@ -666,7 +668,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.29-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.30-pi15
 ```
 
 ## Rebase onto a newer upstream release

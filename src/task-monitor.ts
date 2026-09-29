@@ -112,8 +112,7 @@ export class TaskMonitor implements Component {
     /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
     private actionRanges: { start: number; end: number; enabled: boolean; index: number; run: () => void }[] = [];
     private hoveredButton = -1;
-    private dragRow = -1;
-    private dragScroll = 0;
+    private dragging = false;
     /** Clickable filter tabs (inner-x ranges). */
     private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
 
@@ -320,6 +319,14 @@ export class TaskMonitor implements Component {
     }
 
     /** Scrollbar cell for a viewport row: `┃` thumb over a `│` track. */
+    private setScrollFromRow(innerY: number): void {
+        const logTop = INNER_HEADER + OUT_HEADER_LINES;
+        const r = Math.max(0, Math.min(LOG_ROWS - 1, innerY - logTop));
+        const frac = LOG_ROWS > 1 ? r / (LOG_ROWS - 1) : 0;
+        this.outScroll = Math.max(0, Math.min(this.maxScroll(), Math.round(frac * this.maxScroll())));
+        this.outFollow = false;
+    }
+
     private scrollbarChar(row: number): string {
         const total = this.outLines.length;
         const view = LOG_ROWS;
@@ -561,34 +568,31 @@ export class TaskMonitor implements Component {
             }
             return { handled: true };
         }
+        const innerW = Math.max(24, this.lastWidth - 2);
+        // scrollbar occupies the last column of the output pane; log row 0 is at
+        // innerY = INNER_HEADER + OUT_HEADER_LINES.
+        const logTop = INNER_HEADER + OUT_HEADER_LINES;
+        if (this.outLines.length > LOG_ROWS) {
+            const onBar = innerX === innerW - 1;
+            if (this.dragging) {
+                if (event.type === "release") { this.dragging = false; return { handled: true }; }
+                this.setScrollFromRow(innerY); // absolute: lands where the pointer is
+                return { handled: true, render: true };
+            }
+            if (event.type === "press" && onBar && innerY >= logTop) {
+                this.dragging = true;
+                this.setScrollFromRow(innerY);
+                return { handled: true, capture: true, render: true };
+            }
+            if (event.type === "click" && onBar && innerY >= logTop) {
+                this.setScrollFromRow(innerY);
+                return { handled: true, render: true };
+            }
+        }
         // Body rows start after the inner header (title + action bar + search).
         if (innerY < INNER_HEADER) return undefined;
         const row = innerY - INNER_HEADER;
-        const innerW = Math.max(24, this.lastWidth - 2);
         const leftW = this.leftWidth(innerW);
-        // Draggable scrollbar: the last column of the output pane.
-        if (this.outLines.length > LOG_ROWS && innerX === innerW - 1 && row >= OUT_HEADER_LINES) {
-            const r = row - OUT_HEADER_LINES;
-            if (event.type === "press") {
-                // Record the grab point; drag is 1:1 from here (no jump on press).
-                this.dragRow = r;
-                this.dragScroll = this.outScroll;
-                return { handled: true, capture: true, render: false };
-            }
-            if (event.type === "drag") {
-                const per = Math.max(1, Math.round(this.maxScroll() / Math.max(1, LOG_ROWS - 1)));
-                this.outScroll = Math.max(0, Math.min(this.maxScroll(), this.dragScroll + (r - this.dragRow) * per));
-                this.outFollow = false;
-                return { handled: true, render: true };
-            }
-            if (event.type === "click") {
-                const frac = LOG_ROWS > 1 ? r / (LOG_ROWS - 1) : 0;
-                this.outScroll = Math.max(0, Math.min(this.maxScroll(), Math.round(frac * this.maxScroll())));
-                this.outFollow = false;
-                return { handled: true, render: true };
-            }
-            return { handled: true };
-        }
         if (innerX < leftW) {
             const res = this.list.handleMouse({
                 ...event,

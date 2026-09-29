@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskMonitor } from "../task-monitor.ts";
 import type { Job } from "../types.ts";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
+
+const mouse = (type: TuiMouseEvent["type"], x: number, y: number): TuiMouseEvent => ({
+    type, button: "left", x, y, screenX: x, screenY: y,
+    width: 100, height: 30, shift: false, alt: false, ctrl: false,
+});
 
 // Emit real SGR so the component's ANSI-strip based selected-row detection works
 // exactly as it does with pi's Theme.
@@ -140,20 +146,21 @@ describe("TaskMonitor", () => {
         }
     });
 
-    test("scrollbar is draggable", () => {
+    test("scrollbar drag lands where the pointer is", () => {
         const log = join(tmpdir(), `tm-sb-${process.pid}.log`);
         writeFileSync(log, Array.from({ length: 40 }, (_, i) => `L${String(i).padStart(2, "0")}`).join("\n") + "\n");
         const reg = makeReg([job({ id: "job-1-1", name: "long", logPath: log })]);
         const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
         const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        const at = (x: number, y: number): TuiMouseEvent => mouse("press", x, y);
         try {
-            m.render(100); // establishes lastWidth + action/filter ranges
-            // width 100 -> innerW 98, leftW 39, scrollbar column is x=98; log row 0 is y=9.
-            m.handleMouse({
-                type: "click", button: "left", x: 98, y: 9, screenX: 98, screenY: 9,
-                width: 100, height: 30, shift: false, alt: false, ctrl: false,
-            });
-            assert.ok(m.render(100).map(stripAnsi).join("\n").includes("L00"), "clicking the bar jumps to the top");
+            m.render(100);
+            // Top log row is y=9, bottom (LOG_ROWS-1) is y=27; scrollbar column x=98.
+            m.handleMouse(at(98, 9));
+            assert.ok(m.render(100).map(stripAnsi).join("\n").includes("L00"), "drag to top shows the first line");
+            m.handleMouse(at(98, 27));
+            m.handleMouse({ ...at(98, 27), type: "drag" });            assert.ok(m.render(100).map(stripAnsi).join("\n").includes("L39"), "drag to bottom shows the last line");
+            m.handleMouse({ ...at(98, 27), type: "release" });
         } finally {
             unlinkSync(log);
         }
