@@ -351,8 +351,7 @@ function spawnBackground(args: {
                 `Command running in background with ID: ${id}.${
                     args.name ? ` Name: ${args.name}.` : ""
                 } Output is being written to: ${logPath}` +
-                `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}` +
-                `${ptyArgs ? "\n(Running under a PTY for live output.)" : "\nTip: if the log stays empty while running, re-run with pty: true."}`
+                `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}`
             ),
         ],
         details: undefined,
