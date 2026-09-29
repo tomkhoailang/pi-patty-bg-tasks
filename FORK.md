@@ -841,15 +841,31 @@ The list followed the selected **job id** on every rebuild, so acting on a row
 moved the cursor with it: killing re-sorts the row to the bottom (running-first
 order) and the cursor travelled along; removing dropped the id, so the rebuilt
 `SelectList` fell back to index 0 and the cursor jumped to the top. The 1 s poll
-then re-followed the moved row, undoing any one-off fix.
+then re-followed the moved row, undoing any one-off fix. `rebuildAt(index)`
+rebuilds and restores the cursor's POSITION (`SelectList` clamps it to the new
+bounds), and `actKill`/`actRemove` call it. Filtering/search/typing still follow
+the selected *job*, which is right when the list is genuinely re-defined. See
+Change 22 for the rule that replaced the interim `pinIndexOnce` field.
 
-- `rebuildAt(index)` rebuilds and restores the cursor's POSITION (`SelectList`
-  clamps it to the new bounds).
-- `actKill`/`actRemove` call it, and set `pinIndexOnce` so the poll rebuild that
-  follows the status change keeps the same position instead of dragging the
-  cursor back onto the row that moved.
-- Everything else is unchanged: filtering/search/typing still follow the selected
-  *job*, which is right when the list is genuinely re-defined.
+## Change 22 — the cursor never moves on its own
+
+Action-level fixes were not enough: any status change triggered the 1 s poll's
+rebuild, which dragged the focus around. The rule is now positional, and the
+order is stable:
+
+- **Order is chronological, oldest first.** A new task APPENDS at the bottom, so
+  no existing row shifts; a status change (running → completed/killed) no longer
+  re-sorts anything. The old "running first, then newest" order re-sorted on every
+  completion and inserted new work at the top, so it moved the focus twice over.
+- **The poll keeps the row position** and never follows a task: nothing an event
+  does can move the selection.
+- `cursorPosition()` resolves the selected id against `lastItemIds` — the order
+  the list was last built with — because `SelectList.selectedIndex` is private and
+  the registry already reflects the change that triggered the rebuild (a removed
+  task is gone, a new one is already in).
+- The interim `pinIndexOnce` field is gone; positional rebuilds made it redundant.
+
+Note: with chronological order the newest task sits at the BOTTOM of the list.
 
 ## Environment override
 
@@ -863,7 +879,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.42-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.43-pi15
 ```
 
 ## Rebase onto a newer upstream release

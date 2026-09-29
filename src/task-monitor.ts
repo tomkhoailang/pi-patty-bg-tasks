@@ -125,14 +125,12 @@ export class TaskMonitor implements Component {
     /** Clickable filter tabs (inner-x ranges). */
     private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
 
-    /** Set by kill/remove: the NEXT automatic rebuild keeps the cursor's
-     *  POSITION instead of following the row that moved. One-shot, so a job that
-     *  finishes later can still keep the cursor on itself. */
-    private pinIndexOnce: number | undefined;
     private ticker: ReturnType<typeof setInterval> | undefined;
     private lastSig = "";
     private lastSelectedId: string | undefined;
     private lastLogSize = -1;
+    /** Item ids in the order of the list currently on screen (set by buildList). */
+    private lastItemIds: string[] = [];
 
     constructor(
         reg: BackgroundRegistry,
@@ -226,12 +224,12 @@ export class TaskMonitor implements Component {
         );
         const q = this.query.trim();
         if (!q) {
-            // No query: the canonical order — live work first, then newest.
-            return base.sort(
-                (a, b) =>
-                    Number(b.status === "running") - Number(a.status === "running") ||
-                    b.startTime - a.startTime
-            );
+            // CHRONOLOGICAL, oldest first: a new task APPENDS at the bottom, so no
+            // existing row shifts and the cursor's position keeps pointing at the
+            // same task. Ordering by status or recency instead would re-sort on every
+            // completion, and inserting at the top would shift every row down — both
+            // move the focus without the user doing anything.
+            return base.sort((a, b) => a.startTime - b.startTime);
         }
         // fzf-style: every query character must appear IN ORDER, ranked best-first,
         // with whitespace/slash-separated tokens all required. The haystack is the
@@ -246,6 +244,10 @@ export class TaskMonitor implements Component {
             label: `${this.icon(j)} ${jobLabel(j)}`,
             description: `${j.command.slice(0, PREVIEW_CHARS.taskList)} · ${time(j)} · ${dur(j)}`,
         }));
+        // Remember the ORDER we just handed to the list. The cursor's position can
+        // only be read back from here: `SelectList` keeps `selectedIndex` private,
+        // and asking the registry instead would answer with a post-change order.
+        this.lastItemIds = items.map((i) => i.value);
         const list = new SelectList(items, BODY_ROWS, this.listTheme, {
             minPrimaryColumnWidth: 12,
             maxPrimaryColumnWidth: 30,
@@ -270,12 +272,18 @@ export class TaskMonitor implements Component {
         this.requestRender();
     }
 
-    /** Index of the selected row in the current list. `SelectList` keeps
-     *  `selectedIndex` private, so derive it the way rebuild() does. */
-    private selectedIndexNow(): number {
+    /**
+     * The cursor's row POSITION, read from the list currently on screen.
+     *
+     * `SelectList` keeps `selectedIndex` private, and deriving it from the registry
+     * would answer with the order AFTER the change that triggered the rebuild (a
+     * removed task is already gone; a new one is already in). So resolve the
+     * selected id against the item order we last handed to the list.
+     */
+    private cursorPosition(): number {
         const id = this.list.getSelectedItem()?.value;
-        const idx = this.jobs().findIndex((j) => j.id === id);
-        return idx < 0 ? 0 : idx;
+        const at = id ? this.lastItemIds.indexOf(id) : -1;
+        return at < 0 ? 0 : at;
     }
 
     /** Rebuild keeping the cursor at `index`: the row acted on may vanish or
@@ -326,20 +334,17 @@ export class TaskMonitor implements Component {
         if (changed) this.requestRender();
     }
 
-    /** Rebuild the SelectList without touching the output pane (poll path). */
+    /** Rebuild the SelectList without touching the output pane (poll path).
+     *
+     *  The poll reflects state; it must NEVER move the cursor. The row position is
+     *  kept and rows flow underneath it, so a task that re-sorts, finishes, or
+     *  leaves the list entirely cannot drag the selection with it. Explicit list
+     *  redefinitions (filter/search) are the only things that follow the task, and
+     *  those go through rebuild(). */
     private rebuildListOnly(): void {
-        const prev = this.list.getSelectedItem()?.value;
-        const idx = this.jobs().findIndex((j) => j.id === prev);
+        const at = this.cursorPosition();
         this.list = this.buildList();
-        if (this.pinIndexOnce !== undefined) {
-            // A kill/remove just happened: keep the POSITION, not the row. Without
-            // this the poll drags the cursor back onto the row it moved to (kill)
-            // or onto the top of the list (remove).
-            this.list.setSelectedIndex(this.pinIndexOnce);
-        } else if (idx > 0) {
-            this.list.setSelectedIndex(idx); // stay on the job you were watching
-        }
-        this.pinIndexOnce = undefined;
+        this.list.setSelectedIndex(at); // SelectList clamps to the list bounds
     }
 
     /** Refresh the pinned header + log tail. `resetScroll` follows the end. */
@@ -545,15 +550,13 @@ export class TaskMonitor implements Component {
     }
 
     private actKill(): void {
-        const at = this.selectedIndexNow();
+        const at = this.cursorPosition();
         const j = this.selected();
         if (j && j.status === "running") {
             terminateJobSilently(this.reg, j);
             renderSidebar(this.reg, this.ctx);
         }
-        // Killing re-sorts the row to the bottom: keep the cursor where it was, and
-        // pin the position for the poll rebuild that follows the status change.
-        this.pinIndexOnce = at;
+        // Killing re-sorts the row to the bottom: keep the cursor where it was.
         this.rebuildAt(at);
     }
 
@@ -563,12 +566,11 @@ export class TaskMonitor implements Component {
     }
 
     private actRemove(): void {
-        const at = this.selectedIndexNow();
+        const at = this.cursorPosition();
         const j = this.selected();
         if (j) { this.remove(j); renderSidebar(this.reg, this.ctx); }
         // The row is gone: keep the cursor at the same POSITION rather than
         // letting the rebuilt list snap to the top.
-        this.pinIndexOnce = at;
         this.rebuildAt(at);
     }
 

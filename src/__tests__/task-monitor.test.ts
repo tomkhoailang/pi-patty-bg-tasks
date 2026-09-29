@@ -149,6 +149,52 @@ describe("TaskMonitor", () => {
         }
     });
 
+    test("the poll never moves the cursor by itself", () => {
+        const mk = (n: string) => job({ id: `job-1-${n}`, name: `task-${n}`, command: `task-${n}` });
+        const reg = makeReg([mk("1"), mk("2"), mk("3")]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        const name = (line: string) => line.match(/task-\d+/)![0];
+        const listNames = () =>
+            m.render(100).map(stripAnsi).filter((l) => l.includes("●") && /task-\d+/.test(l)).map(name);
+        const selectedName = () => {
+            const row = m.render(100).map(stripAnsi).find((l) => l.includes("→"));
+            return row ? name(row) : undefined;
+        };
+        const click = (y: number) =>
+            m.handleMouse({
+                type: "click", button: "left", x: 3, y,
+                screenX: 3, screenY: y, width: 100, height: 30, shift: false, alt: false, ctrl: false,
+            });
+        try {
+            m.render(100);
+            click(7); // body row 1
+            const before = listNames();
+            assert.equal(selectedName(), before[1], "cursor on row 1");
+
+            // A new task starts. It is appended, so nothing above it shifts.
+            (reg as unknown as { jobs: Map<string, unknown> }).jobs.set(
+                "job-1-9",
+                job({ id: "job-1-9", name: "task-9", command: "task-9" })
+            );
+            // Drive the poll directly: it is private, and waiting on the 1 s timer
+            // would make this test slow and timing-dependent.
+            (m as unknown as { tick(): void }).tick();
+
+            assert.equal(selectedName(), before[1], "an event did not move the focus");
+            assert.equal(listNames().at(-1), "task-9", "the new task appended at the bottom");
+
+            // Now the selected task leaves the list (as it would under a status
+            // filter when it finishes): the cursor keeps its POSITION instead of
+            // snapping to row 0.
+            (reg as unknown as { jobs: Map<string, unknown> }).jobs.delete("job-1-2");
+            (m as unknown as { tick(): void }).tick();
+            assert.equal(selectedName(), "task-3", "cursor kept its position after the row left");
+        } finally {
+            m.dispose();
+        }
+    });
+
     test("every printable key types into the search", () => {
         const reg = makeReg([
             job({ id: "job-1-1", name: "remove-me", command: "remove-me" }),
