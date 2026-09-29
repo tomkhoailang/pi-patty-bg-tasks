@@ -112,6 +112,8 @@ export class TaskMonitor implements Component {
     /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
     private actionRanges: { start: number; end: number; enabled: boolean; index: number; run: () => void }[] = [];
     private hoveredButton = -1;
+    private dragRow = -1;
+    private dragScroll = 0;
     /** Clickable filter tabs (inner-x ranges). */
     private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
 
@@ -446,7 +448,11 @@ export class TaskMonitor implements Component {
     // --- input --------------------------------------------------------------
 
     handleInput(data: string): void {
-        if (this.focus === "output") return this.handleOutputKey(data);
+        if (this.focus === "output") {
+            this.handleOutputKey(data);
+            this.requestRender(); // repaint immediately, don't wait for the 1s poll
+            return;
+        }
 
         if (matchesKey(data, "escape")) return this.close();
         if (matchesKey(data, "tab")) {
@@ -562,12 +568,24 @@ export class TaskMonitor implements Component {
         const leftW = this.leftWidth(innerW);
         // Draggable scrollbar: the last column of the output pane.
         if (this.outLines.length > LOG_ROWS && innerX === innerW - 1 && row >= OUT_HEADER_LINES) {
-            if (event.type === "press" || event.type === "drag" || event.type === "click") {
-                const r = row - OUT_HEADER_LINES;
+            const r = row - OUT_HEADER_LINES;
+            if (event.type === "press") {
+                // Record the grab point; drag is 1:1 from here (no jump on press).
+                this.dragRow = r;
+                this.dragScroll = this.outScroll;
+                return { handled: true, capture: true, render: false };
+            }
+            if (event.type === "drag") {
+                const per = Math.max(1, Math.round(this.maxScroll() / Math.max(1, LOG_ROWS - 1)));
+                this.outScroll = Math.max(0, Math.min(this.maxScroll(), this.dragScroll + (r - this.dragRow) * per));
+                this.outFollow = false;
+                return { handled: true, render: true };
+            }
+            if (event.type === "click") {
                 const frac = LOG_ROWS > 1 ? r / (LOG_ROWS - 1) : 0;
                 this.outScroll = Math.max(0, Math.min(this.maxScroll(), Math.round(frac * this.maxScroll())));
                 this.outFollow = false;
-                return { handled: true, capture: event.type === "press", render: true };
+                return { handled: true, render: true };
             }
             return { handled: true };
         }
