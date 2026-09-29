@@ -558,7 +558,19 @@ export class TaskMonitor implements Component {
         // Body rows start after the inner header (title + action bar + search).
         if (innerY < INNER_HEADER) return undefined;
         const row = innerY - INNER_HEADER;
-        const leftW = this.leftWidth(Math.max(24, this.lastWidth - 2));
+        const innerW = Math.max(24, this.lastWidth - 2);
+        const leftW = this.leftWidth(innerW);
+        // Draggable scrollbar: the last column of the output pane.
+        if (this.outLines.length > LOG_ROWS && innerX === innerW - 1 && row >= OUT_HEADER_LINES) {
+            if (event.type === "press" || event.type === "drag" || event.type === "click") {
+                const r = row - OUT_HEADER_LINES;
+                const frac = LOG_ROWS > 1 ? r / (LOG_ROWS - 1) : 0;
+                this.outScroll = Math.max(0, Math.min(this.maxScroll(), Math.round(frac * this.maxScroll())));
+                this.outFollow = false;
+                return { handled: true, capture: event.type === "press", render: true };
+            }
+            return { handled: true };
+        }
         if (innerX < leftW) {
             const res = this.list.handleMouse({
                 ...event,

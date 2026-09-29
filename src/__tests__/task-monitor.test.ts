@@ -139,4 +139,23 @@ describe("TaskMonitor", () => {
             unlinkSync(log);
         }
     });
+
+    test("scrollbar is draggable", () => {
+        const log = join(tmpdir(), `tm-sb-${process.pid}.log`);
+        writeFileSync(log, Array.from({ length: 40 }, (_, i) => `L${String(i).padStart(2, "0")}`).join("\n") + "\n");
+        const reg = makeReg([job({ id: "job-1-1", name: "long", logPath: log })]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        try {
+            m.render(100); // establishes lastWidth + action/filter ranges
+            // width 100 -> innerW 98, leftW 39, scrollbar column is x=98; log row 0 is y=9.
+            m.handleMouse({
+                type: "press", button: "left", x: 98, y: 9, screenX: 98, screenY: 9,
+                width: 100, height: 30, shift: false, alt: false, ctrl: false,
+            });
+            assert.ok(m.render(100).map(stripAnsi).join("\n").includes("L00"), "clicking the bar jumps to the top");
+        } finally {
+            unlinkSync(log);
+        }
+    });
 });
