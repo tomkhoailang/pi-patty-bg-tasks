@@ -621,11 +621,16 @@ replacing the empty `openStripPanel` placeholder:
 - **Left** — a filterable task list (`SelectList`): status tabs
   `all|running|completed|failed|killed` (⇥ or `1`-`5`) plus a typed search over
   name / command / id.
-- **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn, wheel).
+- **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn /
+  Home/End, wheel).
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
   `esc` close (`q` is a search character, not a close key).
 - **Mouse** — click a row to select it, wheel to scroll the output, and click the
   footer action buttons (`[x kill] [c copy] [d remove] [⏎ output] [esc close]`).
+  Primary-button drags in the output pane fall through to pi, so transcript
+  selection still works.
+- **Copy** uses pi's `copyToClipboard` (Wayland/X11, WSL PowerShell, OSC 52);
+  `getNativeClipboard().setText` is a no-op on Linux, so it copied nothing.
 - **Icons** — reuse pi's vocabulary (`✓` success / `✗` error) with a plain coloured
   `●` for live work and `·` for killed; no decorative glyphs.
 - Opened via `ctx.ui.custom(..., { overlay: true })`; non-TUI falls back to the
@@ -657,7 +662,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.21-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.22-pi15
 ```
 
 ## Rebase onto a newer upstream release

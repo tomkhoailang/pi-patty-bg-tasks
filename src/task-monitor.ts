@@ -26,6 +26,7 @@ import type {
     TuiMouseEvent,
     TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import type { BackgroundRegistry } from "./state.ts";
 import { OUTPUT_PREVIEW_CHARS, PREVIEW_CHARS } from "./types.ts";
 import type { Job, StripTheme, UiContext } from "./types.ts";
@@ -473,6 +474,8 @@ export class TaskMonitor implements Component {
         if (anyKey(data, "down") || data === "j") { this.outScroll = Math.min(this.maxScroll(), this.outScroll + 1); this.outFollow = false; return; }
         if (anyKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - LOG_ROWS); this.outFollow = false; return; }
         if (anyKey(data, "pageDown")) { this.outScroll = Math.min(this.maxScroll(), this.outScroll + LOG_ROWS); this.outFollow = false; return; }
+        if (anyKey(data, "home")) { this.outScroll = 0; this.outFollow = false; return; }
+        if (anyKey(data, "end")) { this.outScroll = this.maxScroll(); this.outFollow = true; return; }
     }
 
     handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -508,21 +511,19 @@ export class TaskMonitor implements Component {
             this.outFollow = false;
             return { handled: true, render: true };
         }
-        return { handled: true, render: true };
+        // Right-pane primary-button drags fall through, so pi's transcript
+        // selection still works for copying a chunk of output.
+        return undefined;
     }
 
     private async copy(text: string): Promise<void> {
         try {
-            const { getNativeClipboard } = await import("@earendil-works/pi-tui");
-            const clip = getNativeClipboard();
-            if (clip?.setText) {
-                await clip.setText(text);
-                this.ctx.ui.notify("Copied command", "info");
-                return;
-            }
+            // pi's helper handles Wayland/X11, WSL (PowerShell), and OSC 52 —
+            // getNativeClipboard().setText is a no-op on Linux.
+            await copyToClipboard(text);
+            this.ctx.ui.notify("Copied command", "info");
         } catch {
-            /* fall through to showing it */
+            this.ctx.ui.notify(text, "info");
         }
-        this.ctx.ui.notify(text, "info");
     }
 }
