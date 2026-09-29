@@ -112,6 +112,8 @@ export class TaskMonitor implements Component {
     /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
     private actionRanges: { start: number; end: number; enabled: boolean; index: number; run: () => void }[] = [];
     private hoveredButton = -1;
+    /** Clickable filter tabs (inner-x ranges). */
+    private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
 
     private ticker: ReturnType<typeof setInterval> | undefined;
     private lastSig = "";
@@ -362,7 +364,7 @@ export class TaskMonitor implements Component {
             const a = acts[i]!;
             const text = ` ${a.key} ${a.label} `;
             const styled = !a.enabled
-                ? this.theme.fg("muted", text)
+                ? this.bg("selectedBg", this.theme.fg("muted", text))
                 : this.hoveredButton === i
                     ? this.bg("toolPendingBg", this.theme.fg("accent", this.bold(text)))
                     : this.bg("selectedBg", this.theme.fg("text", text));
@@ -372,11 +374,19 @@ export class TaskMonitor implements Component {
         }
         this.actionRanges = ranges;
         inner.push(barLine + this.theme.fg("dim", "↑↓ · ⇥ filter · type to search"));
-        const tabs = FILTERS.map((f) =>
-            f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("muted", ` ${f} `)
-        ).join("");
-        inner.push("  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
-            (this.focus === "list" ? "▏" : "") + "   " + tabs);
+        const tabsLine = "  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
+            (this.focus === "list" ? "▏" : "") + "   ";
+        let searchLine = tabsLine;
+        const franges: typeof this.filterRanges = [];
+        for (const f of FILTERS) {
+            const label = f === this.filter ? `[${f}]` : ` ${f} `;
+            const styled = f === this.filter ? this.theme.fg("accent", label) : this.theme.fg("muted", label);
+            const start = visibleWidth(searchLine);
+            searchLine += styled;
+            franges.push({ start, end: start + visibleWidth(label), filter: f });
+        }
+        this.filterRanges = franges;
+        inner.push(searchLine);
 
         // Right pane: pinned header + rule, then the scrolling log.
         const right: string[] = this.outHeader.length
@@ -506,6 +516,14 @@ export class TaskMonitor implements Component {
         if (event.type === "move" && this.hoveredButton !== -1) {
             this.hoveredButton = -1;
             return { handled: true, render: true };
+        }
+        // Filter tabs sit on inner line 2.
+        if (innerY === 2) {
+            if (event.type === "click" || event.type === "press") {
+                const hit = this.filterRanges.find((r) => innerX >= r.start && innerX < r.end);
+                if (hit) { this.filter = hit.filter; this.rebuild(); return { handled: true, render: true }; }
+            }
+            return { handled: true };
         }
         // Body rows start after the inner header (title + action bar + search).
         if (innerY < INNER_HEADER) return undefined;

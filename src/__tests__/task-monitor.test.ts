@@ -101,4 +101,20 @@ describe("TaskMonitor", () => {
         });
         assert.equal(closed, true);
     });
+
+    test("filter tabs are clickable", () => {
+        const reg = makeReg([
+            job({ id: "job-1-1", name: "live", command: "aaa", status: "running" }),
+            job({ id: "job-1-2", name: "donejob", command: "zzzcomplete", status: "completed" }),
+        ]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        const line = m.render(100).map(stripAnsi).find((l) => l.includes("Search:"))!;
+        const x = line.indexOf(" running ");
+        m.handleMouse({
+            type: "click", button: "left", x, y: 3, screenX: x, screenY: 3,
+            width: 100, height: 30, shift: false, alt: false, ctrl: false,
+        });
+        assert.ok(!m.render(100).map(stripAnsi).join("\n").includes("zzzcomplete"), "completed job hidden under running filter");
+    });
 });

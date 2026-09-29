@@ -619,8 +619,8 @@ A full task monitor in `src/task-monitor.ts`, opened from a strip row (click / `
 replacing the empty `openStripPanel` placeholder:
 
 - **Left** — a filterable task list (`SelectList`): status tabs
-  `all|running|completed|failed|killed` (⇥ or `1`-`5`) plus a typed search over
-  name / command / id.
+  `all|running|completed|failed|killed` (⇥, `1`-`5`, or **click**) plus a typed
+  search over name / command / id.
 - **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn /
   Home/End, wheel).
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
@@ -628,7 +628,7 @@ replacing the empty `openStripPanel` placeholder:
 - **Mouse** — click a row to select it, wheel to scroll the output, and click the
   footer action **pills** (`kill`/`copy`/`remove`/`output`/`close`), which carry a
   hover highlight (`toolPendingBg`) and grey out when not applicable
-  (e.g. `kill` needs a running job). Primary-button drags in the output pane fall
+  (e.g. `kill` needs a running job) — disabled pills stay pill-shaped in `muted`. Primary-button drags in the output pane fall
   through to pi, so transcript selection still works.
 - **Copy** uses pi's `copyToClipboard` (Wayland/X11, WSL PowerShell, OSC 52);
   `getNativeClipboard().setText` is a no-op on Linux, so it copied nothing.
@@ -663,7 +663,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.23-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.24-pi15
 ```
 
 ## Rebase onto a newer upstream release
