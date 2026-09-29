@@ -60,8 +60,8 @@ const strip = (s: string): string => s.replace(ANSI, "");
 const time = (job: Job): string =>
     new Date(job.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const dur = (job: Job): string =>
-    job.status === "running" ? formatDuration(elapsedMs(job)) : job.status;
+/** Run duration — live while running, frozen at `endedAt` once terminal. */
+const dur = (job: Job): string => formatDuration(elapsedMs(job));
 
 const pad = (s: string, width: number): string =>
     s + " ".repeat(Math.max(0, width - visibleWidth(s)));
@@ -411,6 +411,7 @@ export class TaskMonitor implements Component {
                ...this.outLines.slice(this.outScroll, this.outScroll + LOG_ROWS)]
             : [this.outLines[0] ?? ""];
         const sbWidth = this.outLines.length > LOG_ROWS ? 1 : 0;
+        const MARGIN = 1; // left padding inside the output pane
 
         const listLines = this.list.render(leftW);
         for (let i = 0; i < BODY_ROWS; i++) {
@@ -421,10 +422,12 @@ export class TaskMonitor implements Component {
                 : pad(truncateToWidth(raw, leftW, ""), leftW);
             let cell: string;
             if (sbWidth && i >= OUT_HEADER_LINES) {
-                const content = pad(truncateToWidth(right[i] ?? "", rightW - 1, ""), rightW - 1);
-                cell = content + this.scrollbarChar(i - OUT_HEADER_LINES);
+                const w = rightW - MARGIN - 1;
+                cell = " ".repeat(MARGIN) + pad(truncateToWidth(right[i] ?? "", w, ""), w)
+                    + this.scrollbarChar(i - OUT_HEADER_LINES);
             } else {
-                cell = pad(truncateToWidth(right[i] ?? "", rightW, ""), rightW);
+                const w = rightW - MARGIN;
+                cell = " ".repeat(MARGIN) + pad(truncateToWidth(right[i] ?? "", w, ""), w);
             }
             inner.push(`${l}${bar("│")}${this.bg("customMessageBg", cell)}`);
         }

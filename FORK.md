@@ -666,7 +666,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.26-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.27-pi15
 ```
 
 ## Rebase onto a newer upstream release
