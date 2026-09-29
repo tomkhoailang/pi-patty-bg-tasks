@@ -66,17 +66,26 @@ export function registerBashTool(
         ...originalBash,
         name: "bash",
         description:
-            "Run a bash command. Long-running commands auto-background after timeout. " +
-            "Set run_in_background=true to start in background immediately. " +
+            "Run a bash command. A command still running after ~15s is moved to the " +
+            "background automatically and you are notified when it ends — there is " +
+            "nothing to do meanwhile. " +
+            "Set run_in_background=true to start in the background immediately. " +
             "Use /bg to manually background a running command.",
         promptSnippet:
             "Run shell commands; long-running commands auto-background or use run_in_background=true",
         promptGuidelines: [
+            // The contract lives HERE, in the tool description the model reads once —
+            // not in tool results. Antigravity's changelog records that putting
+            // "do not poll" into RESULTS nudged the model into polling (docs/antigravity-background-tasks.md §10.5).
+            "After backgrounding work, take one of exactly two actions: (A) continue with other relevant work, or (B) say one short line and end the turn. Do nothing else — no polling, no log reads.",
+            "No polling is needed: you are resumed when a background job completes or sends a notification.",
+            "If the very next step depends on a command's result, run it synchronously even when it is slow.",
             "Use bash with run_in_background=true when a command is expected to run for a long time.",
             "run_in_background is for ONE notification (the command exits when done). For per-event streaming (watching logs, polling an API, file changes), use the monitor tool instead.",
-            "Never `sleep N` to wait for something — the job lingers for the full sleep. Wait on a background job with jobs action='attach', watch with the monitor tool, or poll with an `until` loop that exits when ready.",
+            "Never `sleep N` to wait for something — the job lingers for the full sleep. To wait deliberately on a job use jobs action='attach'; watch a condition with the monitor tool or an `until` loop that exits when ready.",
             "Check background job status with jobs action='list'.",
             "Read background output with jobs action='output'.",
+            "Kill what you no longer need with jobs action='kill' — do not leave servers and watchers running.",
         ],
         parameters: bashParamSchema,
 
@@ -293,11 +302,10 @@ async function runForeground(args: {
             return {
                 content: [
                     textBlock(
+                        // Facts only. Instructions belong in the tool description, not in
+                        // every result: §10.5 records that anti-poll text here is what
+                        // makes the model poll.
                         `Process backgrounded as ${id}${reason}\n` +
-                            `Wait for it: jobs({ action: "attach", jobId: "${id}" }) — blocks until ` +
-                            `it finishes and returns the outcome.\n` +
-                            `Do NOT poll the log or repeat \`jobs output\`: the completion notice reports ` +
-                            `it on its own when the turn ends.\n` +
                             `Command: ${command}\nPID: ${spawned.pid}\nOutput: ${logPath}`
                     ),
                 ],

@@ -30,13 +30,18 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
         name: "bash_bg",
         label: "Background Bash",
         description:
-            "Start a bash command in the background immediately. " +
-            "Output is saved to /tmp/pi-bg/<jobId>.log.",
+            "Start a bash command in the background immediately. Returns at once with a " +
+            "job id, and you are notified when it ends — there is nothing to do " +
+            "meanwhile. Output is saved to /tmp/pi-bg/<jobId>.log.",
         promptSnippet: "Start long-running commands directly in the background",
         promptGuidelines: [
             "Use bash_bg when a command should definitely start in the background.",
+            "After launching, take one of exactly two actions: (A) continue with other relevant work, or (B) say one short line and end the turn. Do nothing else — no polling, no log reads.",
+            "No polling is needed: you are resumed when the job completes or sends a notification.",
             "bash_bg gives ONE completion notification. For a per-event stream (tail -f | grep, poll loop, file watch, WebSocket feed), use the monitor tool instead.",
-            "Don't background a `sleep N` wait — it just lingers. To wait on an existing job use jobs action='attach'; to wait for a condition use the monitor tool or an `until` loop that exits when ready.",
+            "To wait deliberately use jobs action='attach' (blocks until it ends); to read current output use jobs action='output'. Never read the log file under /tmp/pi-bg directly.",
+            "Kill what you no longer need with jobs action='kill' — do not leave servers and watchers running.",
+            "Don't background a `sleep N` wait — it just lingers. To wait for a condition use the monitor tool or an `until` loop that exits when ready.",
             "Give the job a name when it will be easier to track in jobs list.",
         ],
         parameters: Type.Object({
@@ -106,8 +111,7 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             return {
                 content: [textBlock(
                     `Command running in background with ID: ${id}.` +
-                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}`
-                )],
+                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}`                )],
                 details: undefined,
             };
         },

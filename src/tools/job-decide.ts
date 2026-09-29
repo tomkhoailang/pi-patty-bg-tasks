@@ -23,12 +23,13 @@ export function registerJobDecideTool(
     pi.registerTool({
         name: "job_decide",
         label: "Job Decision",
-        description: "Decide whether to keep, kill, or check a timed-out background job.",
-        promptSnippet: "Decide what to do with a timed-out background job",
+        description: "Answer a background-job decision event (a job that looks blocked on input, or has been silent past the threshold).",
+        promptSnippet: "Answer a background-job decision event",
         promptGuidelines: [
-            "keep: let the job continue running",
-            "kill: terminate the job",
-            "check: inspect the current output",
+            "keep: let the job continue AND stop asking about this silence episode (fresh output starts a new one).",
+            "kill: terminate the job.",
+            "check: inspect the current output before deciding.",
+            "Use this only to answer a decision event; nothing else asks for it.",
         ],
         parameters: Type.Object({
             jobId: Type.String({ description: "Job ID to decide on" }),

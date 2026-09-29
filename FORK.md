@@ -910,6 +910,30 @@ Implements §8 Q1/Q3/Q5 of `docs/antigravity-background-tasks.md`.
 No progress-watch channel is shipped, so the rate-budget that would govern it (1 per
 15 s, auto-disable after 3 drops) is deliberately **not** built — see §8 Q2.
 
+## Change 25 — the contract lives in the prompt, not in results
+
+Implements §10.5. Antigravity's own changelog (decoded from their binary) records
+that the anti-poll reminder they had in `manage_task` RESULTS "could itself nudge
+the model into a polling loop" — so `v1.6.44`'s added instructions were the same
+mistake in reverse: the hand-off result now says only what happened (id, budget,
+command, pid, log path).
+
+Every rule moved into the tool descriptions, where it is read once:
+
+- **The A/B rule** on `bash` and `bash_bg`: after backgrounding, either continue
+  with other relevant work, or say one short line and end the turn — *"Do nothing
+  else — no polling, no log reads."*
+- **The wake promise**: "No polling is needed: you are resumed when a background job
+  completes or sends a notification."
+- **When to be synchronous**: if the next step depends on the result, run it
+  synchronously even when slow.
+- **`jobs` semantics**: `output` is an on-demand read (not a wait), `attach` is a
+  deliberate block, `kill` cleans up, and waiting is never the agent's job.
+- **`job_decide`**: `keep` stops asking about that silence episode.
+
+`src/__tests__/contract.test.ts` pins the wording, including a source-level guard
+that the hand-off result stays facts-only.
+
 ## Environment override
 
 ```sh
@@ -922,7 +946,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.45-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.46-pi15
 ```
 
 ## Rebase onto a newer upstream release
