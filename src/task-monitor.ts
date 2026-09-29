@@ -110,7 +110,8 @@ export class TaskMonitor implements Component {
     private lastWidth = 80;
     private list: SelectList;
     /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
-    private actionRanges: { start: number; end: number; run: () => void }[] = [];
+    private actionRanges: { start: number; end: number; enabled: boolean; index: number; run: () => void }[] = [];
+    private hoveredButton = -1;
 
     private ticker: ReturnType<typeof setInterval> | undefined;
     private lastSig = "";
@@ -346,24 +347,31 @@ export class TaskMonitor implements Component {
         const gap = Math.max(1, innerW - visibleWidth(title) - visibleWidth(counts));
         inner.push(title + " ".repeat(gap) + counts);
 
-        // Clickable action bar (mouse) + key hints. Ranges are inner-x offsets.
-        const acts: { key: string; label: string; run: () => void }[] = [
-            { key: "x", label: "kill", run: () => this.actKill() },
-            { key: "c", label: "copy", run: () => this.actCopy() },
-            { key: "d", label: "remove", run: () => this.actRemove() },
-            { key: "⏎", label: "output", run: () => this.actOutput() },
-            { key: "esc", label: "close", run: () => this.actClose() },
+        // Clickable action buttons (pills) + key hints. Ranges are inner-x offsets.
+        const selJob = this.selected();
+        const acts: { key: string; label: string; enabled: boolean; run: () => void }[] = [
+            { key: "x", label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
+            { key: "c", label: "copy", enabled: !!selJob, run: () => this.actCopy() },
+            { key: "d", label: "remove", enabled: !!selJob, run: () => this.actRemove() },
+            { key: "⏎", label: "output", enabled: !!selJob, run: () => this.actOutput() },
+            { key: "esc", label: "close", enabled: true, run: () => this.actClose() },
         ];
         let barLine = "  ";
-        const ranges: { start: number; end: number; run: () => void }[] = [];
-        for (const a of acts) {
-            const btn = `[${a.key} ${a.label}]`;
+        const ranges: typeof this.actionRanges = [];
+        for (let i = 0; i < acts.length; i++) {
+            const a = acts[i]!;
+            const text = ` ${a.key} ${a.label} `;
+            const styled = !a.enabled
+                ? this.theme.fg("muted", text)
+                : this.hoveredButton === i
+                    ? this.bg("toolPendingBg", this.theme.fg("accent", this.bold(text)))
+                    : this.bg("selectedBg", this.theme.fg("text", text));
             const start = visibleWidth(barLine);
-            barLine += btn + " ";
-            ranges.push({ start, end: start + visibleWidth(btn), run: a.run });
+            barLine += styled + " ";
+            ranges.push({ start, end: start + visibleWidth(text), enabled: a.enabled, index: i, run: a.run });
         }
         this.actionRanges = ranges;
-        inner.push(this.theme.fg("muted", barLine) + this.theme.fg("dim", " ↑↓ · ⇥ filter · type to search"));
+        inner.push(barLine + this.theme.fg("dim", "↑↓ · ⇥ filter · type to search"));
         const tabs = FILTERS.map((f) =>
             f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("muted", ` ${f} `)
         ).join("");
@@ -485,8 +493,19 @@ export class TaskMonitor implements Component {
         // Footer action buttons sit on inner line 1.
         if (innerY === 1) {
             const hit = this.actionRanges.find((r) => innerX >= r.start && innerX < r.end);
-            if (hit) { hit.run(); return { handled: true, render: true }; }
-            return undefined;
+            const idx = hit ? hit.index : -1;
+            const hoverChanged = idx !== this.hoveredButton;
+            this.hoveredButton = idx;
+            if ((event.type === "click" || event.type === "press") && hit?.enabled) {
+                hit.run();
+                return { handled: true, render: true };
+            }
+            return { handled: true, render: hoverChanged };
+        }
+        // Moving off the bar clears the hover highlight.
+        if (event.type === "move" && this.hoveredButton !== -1) {
+            this.hoveredButton = -1;
+            return { handled: true, render: true };
         }
         // Body rows start after the inner header (title + action bar + search).
         if (innerY < INNER_HEADER) return undefined;

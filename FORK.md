@@ -626,9 +626,10 @@ replacing the empty `openStripPanel` placeholder:
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
   `esc` close (`q` is a search character, not a close key).
 - **Mouse** — click a row to select it, wheel to scroll the output, and click the
-  footer action buttons (`[x kill] [c copy] [d remove] [⏎ output] [esc close]`).
-  Primary-button drags in the output pane fall through to pi, so transcript
-  selection still works.
+  footer action **pills** (`kill`/`copy`/`remove`/`output`/`close`), which carry a
+  hover highlight (`toolPendingBg`) and grey out when not applicable
+  (e.g. `kill` needs a running job). Primary-button drags in the output pane fall
+  through to pi, so transcript selection still works.
 - **Copy** uses pi's `copyToClipboard` (Wayland/X11, WSL PowerShell, OSC 52);
   `getNativeClipboard().setText` is a no-op on Linux, so it copied nothing.
 - **Icons** — reuse pi's vocabulary (`✓` success / `✗` error) with a plain coloured
@@ -662,7 +663,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.22-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.23-pi15
 ```
 
 ## Rebase onto a newer upstream release

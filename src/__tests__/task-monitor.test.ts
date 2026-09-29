@@ -93,10 +93,10 @@ describe("TaskMonitor", () => {
         const line = m
             .render(100)
             .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
-            .find((l) => l.includes("[esc close]"));
+            .find((l) => l.includes("esc close"));
         assert.ok(line, "action bar rendered");
         m.handleMouse({
-            type: "click", button: "left", x: line!.indexOf("[esc close]"), y: 2,
+            type: "click", button: "left", x: line!.indexOf("esc close"), y: 2,
             screenX: 0, screenY: 0, width: 100, height: 30, shift: false, alt: false, ctrl: false,
         });
         assert.equal(closed, true);
