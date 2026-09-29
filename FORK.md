@@ -669,6 +669,21 @@ replacing the empty `openStripPanel` placeholder:
   clears the previous interval, and `clearTicker()` only clears the interval it
   owns, so a stacked/stale overlay can't leak a 1 s timer.
 
+## Change 11 — crash-safe job record (reaper now covers hard exits)
+
+The reaper added in Change 10 only saw jobs pi had *snapshotted*, and snapshots
+are written in `session_shutdown`. A SIGKILL, power loss, or pi's own emergency
+exits (dead terminal, uncaught exception) run no extension code, so the orphan
+was never recorded and never reaped.
+
+`src/runtime.ts` now keeps a crash-safe record at `/tmp/pi-bg/jobs.json`, written
+atomically (`write tmp` + `rename`) the moment a job spawns — every spawn path
+funnels through `createRunningJob()` — and cleared in `markTerminal()`. On
+`session_start`, `reapRuntimeOrphans()` runs **before** the snapshot restore and
+SIGTERMs (same pid-reuse guard) every record whose `ownerPid` is not this
+process, then prunes dead records. Records owned by *this* pid are left alone so
+a `/reload` keeps its jobs.
+
 ## Environment override
 
 ```sh
@@ -681,7 +696,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.31-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.32-pi15
 ```
 
 ## Rebase onto a newer upstream release

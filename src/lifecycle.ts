@@ -6,7 +6,7 @@
  * Monitoring (progress polling, stall detection) lives in monitoring.ts.
  */
 
-import { readFileSync, statSync as fsStatSync } from "node:fs";
+import { statSync as fsStatSync } from "node:fs";
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join as pathJoin } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -21,6 +21,7 @@ import {
 import type { BackgroundRegistry } from "./state.ts";
 import { killProcessTree, processExists } from "./spawn.ts";
 import { LOG_DIR, atConcurrencyLimit, forget, renderSidebar } from "./registry.ts";
+import { clearRuntimeJob, reapOrphanProcessGroup } from "./runtime.ts";
 import { watchStalls } from "./monitoring.ts";
 import { enqueueFinished } from "./notify.ts";
 import { formatDuration, jobLabel } from "./format.ts";
@@ -132,6 +133,8 @@ export function markTerminal(
     }
     job.status = status;
     job.exitCode = exitCode;
+    // Terminal is the one moment the crash-safe record stops being needed.
+    clearRuntimeJob(job.id);
     // Stamp the finish time HERE — the single point where a job becomes terminal.
     // It was previously set only when a completion notice was queued, so a silent
     // kill had no finish time and its elapsed kept counting forever.
@@ -478,25 +481,6 @@ export function detectBlockedSleep(command: string): string | null {
  * Validate a job rehydrated from a serialized session entry. If the PID is
  * dead, force the job to a terminal state.
  */
-/**
- * Best-effort reap of a process group left behind by a PREVIOUS pi process
- * (crash / SIGKILL / terminal close). Such an orphan keeps running with no
- * stall watcher, so its log can grow past the 100 MiB cap. Guarded so we never
- * signal an unrelated process: Linux only, and only when the group leader's
- * cmdline still looks like one of our shells/runners (pid-reuse guard).
- */
-function reapOrphanProcessGroup(pid: number): void {
-    if (process.platform !== "linux") return;
-    let cmdline: string;
-    try {
-        cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim();
-    } catch {
-        return; // /proc entry gone — already exited
-    }
-    if (!/\b(bash|sh|script)\b/.test(cmdline)) return;
-    killProcessTree(pid, "SIGTERM");
-}
-
 export function reviveAndValidate(
     _reg: BackgroundRegistry,
     job: Job

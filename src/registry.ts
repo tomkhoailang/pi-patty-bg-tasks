@@ -20,6 +20,7 @@ import {
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
+import { LOG_DIR, recordRuntimeJob } from "./runtime.ts";
 import { DETAIL_TAIL_LINES, STRIP_VISIBLE_LINES, createStripWidget } from "./strip.ts";
 import { openTaskMonitor } from "./task-monitor.ts";
 
@@ -71,7 +72,7 @@ export function nextJobId(reg: BackgroundRegistry): string {
 
 /** Dedicated log directory. Keeping logs in their own dir (not loose in /tmp)
  *  keeps the stale-log sweep bounded — it lists only our files. */
-export const LOG_DIR = "/tmp/pi-bg";
+export { LOG_DIR };
 
 export function logPathFor(jobId: string): string {
     return `${LOG_DIR}/${jobId}.log`;
@@ -98,7 +99,7 @@ export function createRunningJob(args: {
     kind?: JobKind;
     isBackgrounded?: boolean;
 }): Job {
-    return {
+    const job: Job = {
         id: args.id,
         name: args.name,
         command: args.command,
@@ -110,6 +111,10 @@ export function createRunningJob(args: {
         isBackgrounded: args.isBackgrounded ?? true,
         kind: args.kind,
     };
+    // Every spawn path funnels through here, so this is the one place that needs
+    // the crash-safe record (see runtime.ts).
+    recordRuntimeJob(job);
+    return job;
 }
 
 // --- Registry mutations --------------------------------------------------

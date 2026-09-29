@@ -22,6 +22,7 @@ import {
     terminateJobSilently,
 } from "./lifecycle.ts";
 import { forget as forgetJob, stopSidebarTicker } from "./registry.ts";
+import { reapRuntimeOrphans } from "./runtime.ts";
 import { cancelPendingNotices, noteAgentEnd, noteAgentStart } from "./notify.ts";
 import {
     EVENT,
@@ -88,6 +89,12 @@ export default function (pi: ExtensionAPI): void {
             process.argv,
             Boolean(process.stdin.isTTY)
         );
+
+        // Reap jobs left running by a previous pi that died without a
+        // session_shutdown (SIGKILL, power loss, dead terminal, crash). Runs
+        // BEFORE the snapshot restore: those records are the only trace of such
+        // an orphan, and they must be killed before we hand the pids back.
+        reapRuntimeOrphans();
 
         // Restore serialized background job state.
         const entries = ctx.sessionManager.getEntries();
