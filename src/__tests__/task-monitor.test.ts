@@ -62,10 +62,43 @@ describe("TaskMonitor", () => {
         // Selected running job's output header is shown in the right pane.
         assert.ok(m.render(100).join("\n").includes("cargo build --release"));
 
+        m.handleInput("q"); // q is a search char now — must NOT close
+        assert.equal(closed, false);
         m.handleInput("\r"); // enter -> focus output
         m.handleInput("j"); // scroll output
-        m.handleInput("\x1b"); // esc -> back to list
-        m.handleInput("q"); // q -> close
+        m.handleInput("\x1b"); // esc -> close
+        assert.equal(closed, true);
+    });
+
+    test("mouse click selects the row under the pointer (frame offset)", () => {
+        const reg = makeReg([
+            job({ id: "job-1-1", name: "one", status: "running" }),
+            job({ id: "job-1-2", name: "two", status: "completed" }),
+        ]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        m.render(100);
+        // Body row 1 is at overall y=5 (top border + title + action bar + search).
+        m.handleMouse({
+            type: "click", button: "left", x: 3, y: 5, screenX: 3, screenY: 5,
+            width: 100, height: 30, shift: false, alt: false, ctrl: false,
+        });
+        const lines = m.render(100).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+        const sel = lines.find((l) => l.includes("→"));
+        assert.ok(sel && sel.includes("two"), sel ?? "(no selected row)");
+    });
+
+    test("footer action buttons are clickable", () => {
+        let closed = false;
+        const m = new TaskMonitor(makeReg([job({})]), ctx, theme as never, () => {}, () => (closed = true), "all");
+        const line = m
+            .render(100)
+            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+            .find((l) => l.includes("[esc close]"));
+        assert.ok(line, "action bar rendered");
+        m.handleMouse({
+            type: "click", button: "left", x: line!.indexOf("[esc close]"), y: 2,
+            screenX: 0, screenY: 0, width: 100, height: 30, shift: false, alt: false, ctrl: false,
+        });
         assert.equal(closed, true);
     });
 });

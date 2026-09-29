@@ -20,6 +20,7 @@ import { statSync } from "node:fs";
 import { SelectList, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Component,
+    KeyId,
     SelectItem,
     SelectListTheme,
     TuiMouseEvent,
@@ -41,8 +42,8 @@ const BODY_ROWS = 22;
 /** Right-pane lines above the scrolling log: 2 header lines + 1 rule. */
 const OUT_HEADER_LINES = 3;
 const LOG_ROWS = BODY_ROWS - OUT_HEADER_LINES;
-/** Lines above the body: border + header + hint + search. Mouse y offset. */
-const HEADER_ROWS = 4;
+/** Inner-content lines before the body: title + hint + search. */
+const INNER_HEADER = 3;
 /** Live poll cadence (ms). */
 const POLL_MS = 1000;
 
@@ -55,12 +56,6 @@ interface MonitorTheme extends StripTheme {
 const ANSI = /\x1b\[[0-9;]*m/g;
 const strip = (s: string): string => s.replace(ANSI, "");
 
-const icon = (job: Job): string =>
-    job.status === "running" ? (job.stalled ? "⏸" : "▶")
-    : job.status === "completed" ? "✓"
-    : job.status === "failed" ? "✗"
-    : "⊘";
-
 const time = (job: Job): string =>
     new Date(job.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -69,6 +64,9 @@ const dur = (job: Job): string =>
 
 const pad = (s: string, width: number): string =>
     s + " ".repeat(Math.max(0, width - visibleWidth(s)));
+
+/** matchesKey over several spellings ("return"/"enter", "pageUp"/"pageup"). */
+const anyKey = (data: string, ...ids: KeyId[]): boolean => ids.some((id) => matchesKey(data, id));
 
 /** Open the task monitor. `initial` pre-selects a status filter tab. */
 export async function openTaskMonitor(
@@ -110,6 +108,8 @@ export class TaskMonitor implements Component {
     private outFollow = true;
     private lastWidth = 80;
     private list: SelectList;
+    /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
+    private actionRanges: { start: number; end: number; run: () => void }[] = [];
 
     private ticker: ReturnType<typeof setInterval> | undefined;
     private lastSig = "";
@@ -169,6 +169,17 @@ export class TaskMonitor implements Component {
         return this.theme.bold ? this.theme.bold(text) : text;
     }
 
+    /** Status glyph, reusing pi's vocabulary ("✓" success / "✗" failure) with a
+     *  plain "●" for live work — coloured, no decorative symbols. */
+    private icon(job: Job): string {
+        if (job.status === "running") {
+            return this.theme.fg(job.stalled ? "warning" : "accent", "●");
+        }
+        if (job.status === "completed") return this.theme.fg("success", "✓");
+        if (job.status === "failed") return this.theme.fg("error", "✗");
+        return this.theme.fg("muted", "·"); // killed
+    }
+
     // --- data ---------------------------------------------------------------
 
     /** Every known task: running (reg.jobs) + terminal (reg.recentTerminal),
@@ -205,7 +216,7 @@ export class TaskMonitor implements Component {
     private buildList(): SelectList {
         const items: SelectItem[] = this.jobs().map((j) => ({
             value: j.id,
-            label: `${icon(j)} ${jobLabel(j)}`,
+            label: `${this.icon(j)} ${jobLabel(j)}`,
             description: `${j.command.slice(0, PREVIEW_CHARS.taskList)} · ${time(j)} · ${dur(j)}`,
         }));
         const list = new SelectList(items, BODY_ROWS, this.listTheme, {
@@ -288,7 +299,7 @@ export class TaskMonitor implements Component {
             return;
         }
         this.outHeader = [
-            `${icon(job)} ${jobLabel(job)}  ·  ${job.status}  ·  ${time(job)}  ·  ${dur(job)}`,
+            `${this.icon(job)} ${jobLabel(job)}  ·  ${job.status}  ·  ${time(job)}  ·  ${dur(job)}`,
             `$ ${job.command}`,
         ];
         const tail = readLogTail(job, OUTPUT_PREVIEW_CHARS).replace(/\r/g, "");
@@ -312,10 +323,10 @@ export class TaskMonitor implements Component {
         const j = this.allJobs();
         const n = (s: string) => j.filter((x) => x.status === s).length;
         const parts: string[] = [];
-        if (n("running")) parts.push(this.theme.fg("accent", `▶ ${n("running")} running`));
+        if (n("running")) parts.push(this.theme.fg("accent", `● ${n("running")} running`));
         if (n("completed")) parts.push(this.theme.fg("success", `✓ ${n("completed")} done`));
         if (n("failed")) parts.push(this.theme.fg("error", `✗ ${n("failed")} failed`));
-        if (n("killed")) parts.push(this.theme.fg("muted", `⊘ ${n("killed")} killed`));
+        if (n("killed")) parts.push(this.theme.fg("muted", `· ${n("killed")} killed`));
         return parts.join(this.theme.fg("muted", " · "));
     }
 
@@ -334,9 +345,24 @@ export class TaskMonitor implements Component {
         const gap = Math.max(1, innerW - visibleWidth(title) - visibleWidth(counts));
         inner.push(title + " ".repeat(gap) + counts);
 
-        inner.push(this.theme.fg("muted",
-            "  ↑↓ move · ⇥ filter · x kill · c copy · d remove · ⏎ output · esc close"));
-
+        // Clickable action bar (mouse) + key hints. Ranges are inner-x offsets.
+        const acts: { key: string; label: string; run: () => void }[] = [
+            { key: "x", label: "kill", run: () => this.actKill() },
+            { key: "c", label: "copy", run: () => this.actCopy() },
+            { key: "d", label: "remove", run: () => this.actRemove() },
+            { key: "⏎", label: "output", run: () => this.actOutput() },
+            { key: "esc", label: "close", run: () => this.actClose() },
+        ];
+        let barLine = "  ";
+        const ranges: { start: number; end: number; run: () => void }[] = [];
+        for (const a of acts) {
+            const btn = `[${a.key} ${a.label}]`;
+            const start = visibleWidth(barLine);
+            barLine += btn + " ";
+            ranges.push({ start, end: start + visibleWidth(btn), run: a.run });
+        }
+        this.actionRanges = ranges;
+        inner.push(this.theme.fg("muted", barLine) + this.theme.fg("dim", " ↑↓ · ⇥ filter · type to search"));
         const tabs = FILTERS.map((f) =>
             f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("muted", ` ${f} `)
         ).join("");
@@ -379,11 +405,7 @@ export class TaskMonitor implements Component {
     handleInput(data: string): void {
         if (this.focus === "output") return this.handleOutputKey(data);
 
-        if (matchesKey(data, "escape")) {
-            if (this.query) { this.query = ""; this.rebuild(); } else this.close();
-            return;
-        }
-        if (data === "q" && !this.query) return this.close();
+        if (matchesKey(data, "escape")) return this.close();
         if (matchesKey(data, "tab")) {
             this.filter = FILTERS[(FILTERS.indexOf(this.filter) + 1) % FILTERS.length]!;
             this.rebuild();
@@ -394,38 +416,16 @@ export class TaskMonitor implements Component {
             this.rebuild();
             return;
         }
-        if (data === "x") {
-            const j = this.selected();
-            if (j && j.status === "running") {
-                terminateJobSilently(this.reg, j);
-                renderSidebar(this.reg, this.ctx);
-            }
-            this.rebuild();
-            return;
-        }
-        if (data === "c") {
-            const j = this.selected();
-            if (j) void this.copy(j.command);
-            return;
-        }
-        if (data === "d") {
-            const j = this.selected();
-            if (j) { this.remove(j); renderSidebar(this.reg, this.ctx); }
-            this.rebuild();
-            return;
-        }
-        if (matchesKey(data, "enter")) {
-            this.focus = "output";
-            this.outFollow = true;
-            this.updateOutput();
-            return;
-        }
+        if (data === "x") return void this.actKill();
+        if (data === "c") return void this.actCopy();
+        if (data === "d") return void this.actRemove();
+        if (anyKey(data, "return", "enter")) return void this.actOutput();
         if (matchesKey(data, "backspace") || data === "\x7f") {
             this.query = this.query.slice(0, -1);
             this.rebuild();
             return;
         }
-        if (/^\x1b\[[0-9;]*[A-C]$/.test(data)) {
+        if (anyKey(data, "up", "down")) {
             this.list.handleInput(data);
             return;
         }
@@ -435,24 +435,65 @@ export class TaskMonitor implements Component {
         }
     }
 
+    private actKill(): void {
+        const j = this.selected();
+        if (j && j.status === "running") {
+            terminateJobSilently(this.reg, j);
+            renderSidebar(this.reg, this.ctx);
+        }
+        this.rebuild();
+    }
+
+    private actCopy(): void {
+        const j = this.selected();
+        if (j) void this.copy(j.command);
+    }
+
+    private actRemove(): void {
+        const j = this.selected();
+        if (j) { this.remove(j); renderSidebar(this.reg, this.ctx); }
+        this.rebuild();
+    }
+
+    private actOutput(): void {
+        this.focus = "output";
+        this.outFollow = true;
+        this.updateOutput();
+        this.requestRender();
+    }
+
+    private actClose(): void {
+        this.close();
+    }
+
     private handleOutputKey(data: string): void {
-        if (matchesKey(data, "escape") || matchesKey(data, "enter")) { this.focus = "list"; return; }
-        if (matchesKey(data, "up") || data === "k") { this.outScroll = Math.max(0, this.outScroll - 1); this.outFollow = false; return; }
-        if (matchesKey(data, "down") || data === "j") { this.outScroll = Math.min(this.maxScroll(), this.outScroll + 1); this.outFollow = false; return; }
-        if (matchesKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - LOG_ROWS); this.outFollow = false; return; }
-        if (matchesKey(data, "pageDown")) { this.outScroll = Math.min(this.maxScroll(), this.outScroll + LOG_ROWS); this.outFollow = false; return; }
+        if (matchesKey(data, "escape")) return this.close();
+        if (anyKey(data, "return", "enter")) { this.focus = "list"; return; }
+        if (anyKey(data, "up") || data === "k") { this.outScroll = Math.max(0, this.outScroll - 1); this.outFollow = false; return; }
+        if (anyKey(data, "down") || data === "j") { this.outScroll = Math.min(this.maxScroll(), this.outScroll + 1); this.outFollow = false; return; }
+        if (anyKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - LOG_ROWS); this.outFollow = false; return; }
+        if (anyKey(data, "pageDown")) { this.outScroll = Math.min(this.maxScroll(), this.outScroll + LOG_ROWS); this.outFollow = false; return; }
     }
 
     handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-        const x = event.x - 1; // inside the frame
-        const y = event.y - 1;
-        if (x < 0 || y < HEADER_ROWS) return undefined;
+        const innerX = event.x - 1; // inside the frame
+        const innerY = event.y - 1;
+        if (innerX < 0) return undefined;
+        // Footer action buttons sit on inner line 1.
+        if (innerY === 1) {
+            const hit = this.actionRanges.find((r) => innerX >= r.start && innerX < r.end);
+            if (hit) { hit.run(); return { handled: true, render: true }; }
+            return undefined;
+        }
+        // Body rows start after the inner header (title + action bar + search).
+        if (innerY < INNER_HEADER) return undefined;
+        const row = innerY - INNER_HEADER;
         const leftW = this.leftWidth(Math.max(24, this.lastWidth - 2));
-        if (x < leftW) {
+        if (innerX < leftW) {
             const res = this.list.handleMouse({
                 ...event,
-                x,
-                y: y - HEADER_ROWS,
+                x: innerX,
+                y: row,
                 width: leftW,
                 height: BODY_ROWS,
             });
@@ -467,7 +508,7 @@ export class TaskMonitor implements Component {
             this.outFollow = false;
             return { handled: true, render: true };
         }
-        return undefined;
+        return { handled: true, render: true };
     }
 
     private async copy(text: string): Promise<void> {

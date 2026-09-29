@@ -623,7 +623,11 @@ replacing the empty `openStripPanel` placeholder:
   name / command / id.
 - **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn, wheel).
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
-  `esc`/`q` close. Mouse works on both panes.
+  `esc` close (`q` is a search character, not a close key).
+- **Mouse** — click a row to select it, wheel to scroll the output, and click the
+  footer action buttons (`[x kill] [c copy] [d remove] [⏎ output] [esc close]`).
+- **Icons** — reuse pi's vocabulary (`✓` success / `✗` error) with a plain coloured
+  `●` for live work and `·` for killed; no decorative glyphs.
 - Opened via `ctx.ui.custom(..., { overlay: true })`; non-TUI falls back to the
   `select()`-based `openBgListPanel`. Also reachable manually with the
   **`/monitor-task`** slash command.
@@ -653,7 +657,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.20-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.21-pi15
 ```
 
 ## Rebase onto a newer upstream release
