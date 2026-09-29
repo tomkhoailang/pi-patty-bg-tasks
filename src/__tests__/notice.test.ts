@@ -8,7 +8,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-    batchLevel,
     formatMonitorLine,
     formatNotices,
     headline,
@@ -199,50 +198,19 @@ void describe("headline", () => {
     });
 });
 
-void describe("batchLevel", () => {
-    void it("info when nothing failed", () => {
-        assert.equal(
-            batchLevel([mkJob({ status: "completed" })], []),
-            "info"
-        );
-    });
-    void it("error when a job failed", () => {
-        assert.equal(
-            batchLevel([mkJob({ status: "failed", exitCode: 1 })], []),
-            "error"
-        );
-    });
-    void it("error when a monitor failed (even if all jobs passed)", () => {
-        assert.equal(
-            batchLevel(
-                [mkJob({ status: "completed" })],
-                [{ description: "x", summary: "died", failed: true }]
-            ),
-            "error"
-        );
-    });
-    void it("info when a job was killed (intentional, not an error)", () => {
-        assert.equal(
-            batchLevel([mkJob({ status: "killed" })], []),
-            "info"
-        );
-    });
-});
-
 void describe("formatNotices", () => {
     void it("empty input returns an empty-string notice", () => {
         const n = formatNotices([], []);
-        assert.equal(n.content, "");
-        assert.equal(n.level, "info");
+        assert.equal(n, "");
     });
     void it("1 job + 1 monitor reports both — no silent drop", () => {
         const n = formatNotices(
             [mkJob({ id: "job-1-1" })],
             [{ description: "deploy", summary: "stream ended", failed: false }]
         );
-        assert.match(n.content, /1 background job finished\. 1 monitor ended/);
-        assert.match(n.content, /✓ "npm test" \(5s, job-1-1\)/);
-        assert.match(n.content, /◉ deploy — stream ended/);
+        assert.match(n, /1 background job finished\. 1 monitor ended/);
+        assert.match(n, /✓ "npm test" \(5s, job-1-1\)/);
+        assert.match(n, /◉ deploy — stream ended/);
     });
     void it("failed jobs are listed before completed ones", () => {
         const n = formatNotices(
@@ -252,7 +220,7 @@ void describe("formatNotices", () => {
             ],
             []
         );
-        const lines = n.content.split("\n");
+        const lines = n.split("\n");
         const failedIdx = lines.findIndex((l) => l.includes("bad-1"));
         const okIdx = lines.findIndex((l) => l.includes("ok-1"));
         assert.ok(failedIdx < okIdx);
@@ -265,9 +233,9 @@ void describe("formatNotices", () => {
             ],
             []
         );
-        assert.match(n.content, /^⊘ "npm test" \(5s, killed, k-1\)$/m);
+        assert.match(n, /^⊘ "npm test" \(5s, killed, k-1\)$/m);
         // The k-1 line is alone (no nudge under it), so it has no follow-up line.
-        const lines = n.content.split("\n");
+        const lines = n.split("\n");
         const kIdx = lines.findIndex((l) => l.includes("k-1"));
         const next = lines[kIdx + 1] ?? "";
         assert.ok(!next.includes("jobs({ action:"), `unexpected nudge under killed: ${next}`);

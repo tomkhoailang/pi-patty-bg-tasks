@@ -185,18 +185,12 @@ function sendCoalescedNotice(
     reg.pendingFinished = [];
     reg.pendingMonitorEnds = [];
 
-    const { content, level } = formatNotices(jobs, monitors);
-
-    try {
-        ctx.ui.notify(content, level);
-    } catch (err) {
-        // Banner failed (typically a stale ctx after a session switch/fork).
-        // Re-queue at the head so the next flush attempt can retry, and bail
-        // — if the UI is stale, sendMessage is almost certainly stale too.
-        requeueHead(reg, jobs, monitors);
-        log.error("[bg-tasks] notice dropped, re-queued:", err);
-        return;
-    }
+    // ONE surface: the displayed custom message IS the notice. Also calling
+    // ctx.ui.notify with the same text rendered every notice twice on screen —
+    // once as an unlabelled line (which reads as the user's own words) and once
+    // as our labelled block. The banner is kept only where nothing else renders
+    // a notice at all (the hand-off toast).
+    const content = formatNotices(jobs, monitors);
 
     try {
         pi.sendMessage(
@@ -220,12 +214,11 @@ function sendCoalescedNotice(
             deliver
         );
     } catch (err) {
-        // Banner went out but the agent didn't get the message. Re-queue at
-        // the head so a retry surfaces the notice to the agent on the next
-        // pass.
+        // The notice never reached the agent. Re-queue at the head so a retry
+        // surfaces it on the next pass (typically a stale ctx after a session
+        // switch/fork).
         requeueHead(reg, jobs, monitors);
         log.error("[bg-tasks] sendMessage failed, notice re-queued:", err);
-        return;
     }
 }
 

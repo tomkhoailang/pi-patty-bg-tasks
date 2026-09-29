@@ -188,7 +188,7 @@ void describe("notify — turn-boundary coalescing", () => {
     });
 
     void it("a killed job is reported without a nudge (intentional cleanup)", () => {
-        const { reg, pi, ctx, messages, notices } = harness();
+        const { reg, pi, ctx, messages } = harness();
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-1", status: "killed" }));
         flushTurnBoundaryNotices(reg, pi as never, ctx);
         const c = messages[0].content;
@@ -199,7 +199,6 @@ void describe("notify — turn-boundary coalescing", () => {
             0,
             "no nudge for a killed job"
         );
-        assert.equal(notices[0].level, "info", "killed is not an error");
     });
 
     void it("a failed job without an exitCode is labeled clearly", () => {
@@ -360,11 +359,21 @@ void describe("notify — wake shape per path", () => {
         assert.equal(reg.pendingFinished[0].id, "job-1-1");
     });
 
-    void it("idle-path flush re-queues items when notify throws (no silent loss)", () => {
-        const { reg, pi, ctx, messages } = harness({ notifyThrows: true });
+    void it("a notice renders on ONE surface (no banner duplicate)", () => {
+        const { reg, pi, ctx, messages, notices } = harness();
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-1" }));
         flushIdleNotices(reg, pi as never, ctx);
-        assert.equal(messages.length, 0, "sendMessage never reached");
+        // The displayed custom message is the notice. A banner with the same text
+        // rendered it a second time on screen, in a spot that reads as the user's.
+        assert.equal(messages.length, 1, "the notice reached the agent");
+        assert.equal(notices.length, 0, "and nothing else rendered the same text");
+    });
+
+    void it("idle-path flush re-queues items when sendMessage throws (no silent loss)", () => {
+        const { reg, pi, ctx, messages } = harness({ deliverThrows: true });
+        enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-1-1" }));
+        flushIdleNotices(reg, pi as never, ctx);
+        assert.equal(messages.length, 0, "nothing was delivered");
         assert.equal(reg.pendingFinished.length, 1, "re-queued for retry");
         assert.equal(reg.pendingFinished[0].id, "job-1-1");
     });

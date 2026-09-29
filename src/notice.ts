@@ -11,17 +11,10 @@
 import type { Job, MonitorEnd } from "./types.ts";
 import { formatDuration } from "./format.ts";
 
-/** `Notice` is the shape `formatNotices` produces — a content string plus a
- *  user-facing `level`. notify.ts forwards each to ctx.ui.notify. */
-export interface Notice {
-    content: string;
-    level: "info" | "error";
-}
-
-/** Tool-call pseudo-syntax for the `jobs` tool — single source of truth so
- *  the completion notice nudge and any future UI surfaces stay in sync with
- *  the tool's parameter shape. The id is sanitized in case persisted state
- *  or external reconstruction ever surfaces a non-conformant one. */
+/** Tool-call pseudo-syntax for the `jobs` tool — single source of truth so the
+ *  completion notice nudge and any future UI surfaces stay in sync with the
+ *  tool's parameter shape. The id is sanitized in case persisted state or
+ *  external reconstruction ever surfaces a non-conformant one. */
 function jobsOutputInvocation(jobId: string): string {
     const safe = jobId.replace(/["\\\n\r]/g, "?");
     return `jobs({ action: "output", jobId: "${safe}" })`;
@@ -117,31 +110,17 @@ export function headline(jobs: Job[], monitors: MonitorEnd[]): string {
     return parts.join(". ");
 }
 
-/** Notice level for a mixed batch — info unless anything failed. */
-export function batchLevel(
-    jobs: readonly Job[],
-    monitors: readonly MonitorEnd[]
-): "info" | "error" {
-    const anyFailed =
-        jobs.some((j) => j.status === "failed") || monitors.some((m) => m.failed);
-    return anyFailed ? "error" : "info";
-}
-
-/** Format any combination of finished jobs + monitor-terminal notices into
- *  one Notice. Always goes through the unified headline+lines shape so the
- *  1-job+1-monitor case doesn't silently drop one of them. */
-export function formatNotices(jobs: Job[], monitors: MonitorEnd[]): Notice {
-    if (jobs.length === 0 && monitors.length === 0) {
-        return { content: "", level: "info" };
-    }
+/** Format any combination of finished jobs + monitor-terminal notices into the
+ *  single string the agent sees. Always goes through the unified headline+lines
+ *  shape so the 1-job+1-monitor case doesn't silently drop one of them. */
+export function formatNotices(jobs: Job[], monitors: MonitorEnd[]): string {
+    if (jobs.length === 0 && monitors.length === 0) return "";
 
     const sortedJobs = sortJobsForNotice(jobs);
     const jobBody = sortedJobs.flatMap(jobNoticeLines);
     const monitorBody = monitors.map(formatMonitorLine);
 
-    const content = [headline(jobs, monitors), ...jobBody, ...monitorBody]
+    return [headline(jobs, monitors), ...jobBody, ...monitorBody]
         .filter((s) => s.length > 0)
         .join("\n");
-
-    return { content, level: batchLevel(jobs, monitors) };
 }

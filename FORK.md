@@ -990,6 +990,19 @@ Accepted cost: a notice that lands mid-turn now surfaces at the turn boundary
 instead of riding the next LLM call (the §8 Q3 optimization). Attribution beats
 shaving that turn.
 
+## Change 29 — one surface per notice (no banner duplicate)
+
+`sendCoalescedNotice` emitted the same text twice: `ctx.ui.notify(content, level)`
+AND `pi.sendMessage({content, display: true})`. The transcript held only ONE entry
+(proven from the session file), but the screen showed two — an unlabelled line
+(which sits where the user's own words go, hence "that's not mine") and our labelled
+`[job-finished]` block.
+
+The banner call is gone; the displayed custom message IS the notice. The banner stays
+only where nothing else renders text at all (the hand-off toast). `formatNotices` now
+returns a plain string — the `Notice` interface and `batchLevel` went with it, since
+nothing consumed the level any more.
+
 ## Environment override
 
 ```sh
@@ -1002,7 +1015,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.47-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.49-pi15
 ```
 
 ## Rebase onto a newer upstream release
