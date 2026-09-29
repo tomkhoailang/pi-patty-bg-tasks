@@ -20,7 +20,8 @@ import {
 } from "./types.ts";
 import type { BackgroundRegistry } from "./state.ts";
 import { readBoundedTail, readLastLine } from "./output.ts";
-import { DETAIL_TAIL_LINES, STRIP_VISIBLE_LINES, createStripWidget, openStripPanel } from "./strip.ts";
+import { DETAIL_TAIL_LINES, STRIP_VISIBLE_LINES, createStripWidget } from "./strip.ts";
+import { openTaskMonitor } from "./task-monitor.ts";
 
 /** Upper bound on the completed/killed pool the strip may draw from. Only
  *  reached when expanded — it exists so a long session cannot accumulate an
@@ -263,10 +264,10 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
         .map((job) => jobRow(job, "failed"));
 
     const quiet = jobs
-        .filter((job) => job.status === "completed" || job.status === "killed")
+        .filter((job) => job.status === "completed")
         .sort(byFinishDesc)
         .slice(0, STRIP_POOL_MAX)
-        .map((job) => jobRow(job, job.status as StripState));
+        .map((job) => jobRow(job, "completed"));
 
     return [...running, ...stalled, ...failed, ...quiet];
 }
@@ -317,7 +318,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                     () => buildStripRows(reg),
                     ctx.ui.theme,
                     {
-                        select: (job) => { void openStripPanel(job, ctx); },
+                        select: (job) => { void openTaskMonitor(reg, ctx, job.status === "running" ? "all" : job.status); },
                         expand: (jobId) => {
                             reg.stripExpandedJob = jobId;
                             requestStripRender(reg);

@@ -189,6 +189,9 @@ export interface StripMouseEvent {
     button: string;
     x: number;
     y: number;
+    /** Component bounds, supplied by Pi's normalized mouse dispatch. */
+    width?: number;
+    height?: number;
     wheelDelta?: number;
     clickCount?: number;
 }
@@ -259,7 +262,8 @@ export interface UiContext {
                 theme: StripTheme,
                 keybindings: unknown,
                 done: (result: T) => void
-            ) => StripWidgetComponent
+            ) => StripWidgetComponent,
+            options?: unknown
         ): Promise<T>;
         /**
          * Raw terminal input, delivered BEFORE the focused-component dispatch and

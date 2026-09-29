@@ -613,6 +613,22 @@ It now watches **output activity only**:
 Silence never kills a job; only the 100 MiB oversize guard terminates. Thresholds
 are env-configurable: `PI_PATTY_BG_QUIET_MS`, `PI_PATTY_BG_QUIET_LONG_MS`.
 
+## Change 9 — Task Monitor modal (two-pane)
+
+A full task monitor in `src/task-monitor.ts`, opened from a strip row (click / `o`),
+replacing the empty `openStripPanel` placeholder:
+
+- **Left** — a filterable task list (`SelectList`): status tabs
+  `all|running|completed|failed|killed` (⇥ or `1`-`5`) plus a typed search over
+  name / command / id.
+- **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn, wheel).
+- **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
+  `esc`/`q` close. Mouse works on both panes.
+- Opened via `ctx.ui.custom(..., { overlay: true })`; non-TUI falls back to the
+  `select()`-based `openBgListPanel`.
+- The strip no longer lists **killed** jobs — they live in the monitor's `killed`
+  filter.
+
 ## Environment override
 
 ```sh
@@ -625,7 +641,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.15-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.16-pi15
 ```
 
 ## Rebase onto a newer upstream release

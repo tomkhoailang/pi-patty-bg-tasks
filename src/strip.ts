@@ -368,7 +368,7 @@ class StripComponent implements StripWidgetComponent {
      * never disagree with what was drawn.
      */
     private hitAt(event: StripMouseEvent): StripHit | undefined {
-        const { rows, lines } = this.layout(event.width);
+        const { rows, lines } = this.layout(this.lastWidth);
 
         // Walk the map accumulating RENDERED heights and keep the offset INSIDE
         // the entry. A detail block occupies several lines, so `lines[event.y]`
@@ -582,37 +582,4 @@ export function createStripWidget(
         onKeys((data) => component.handleKey(data));
         return component;
     };
-}
-
-/**
- * Modal panel opened by clicking a row's name (or `o` / Enter while expanded).
- *
- * Inline expansion is the primary mode; this stays a placeholder for the
- * full-screen view that will carry search and filtering.
- */
-export async function openStripPanel(job: Job, ctx: UiContext): Promise<void> {
-    // Custom components are terminal-only (Pi's own guard for ctx.ui.custom).
-    if (ctx.mode !== "tui") return;
-
-    const custom = ctx.ui.custom;
-    if (typeof custom !== "function") {
-        ctx.ui.notify(`▶ ${job.name ?? job.id} · ${job.status}`, "info");
-        return;
-    }
-
-    const body = [
-        `▶ ${job.name ?? job.id} · ${job.status}`,
-        "",
-        "        (empty — wired up next)",
-        "",
-        "  esc or q to close",
-    ];
-
-    await custom((_tui, _theme, _kb, done) => ({
-        render: (width: number) => body.map((line) => truncateToWidth(line, width)),
-        invalidate: () => {},
-        handleInput: (data: string) => {
-            if (isKey(data, "escape") || data === "q" || isKey(data, "enter")) done(undefined);
-        },
-    }));
 }
