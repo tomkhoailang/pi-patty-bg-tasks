@@ -167,6 +167,8 @@ export interface StripActions {
     toggleList(): void;
     /** Terminate a job (`x`). */
     kill(job: Job): void;
+    /** Open the Task Monitor modal (the footer button). */
+    openMonitor(): void;
     /** Job id of the inline-expanded row, if any. */
     expandedJobId(): string | undefined;
     /** Whether the row list is expanded past its line budget. */
@@ -178,6 +180,9 @@ export interface StripActions {
 /** Theme slice used for strip styling. */
 export interface StripTheme {
     fg(colour: string, text: string): string;
+    /** Pi's runtime theme supplies bg slots; kept optional so a narrow theme
+     *  (tests) still works. */
+    bg?(slot: string, text: string): string;
 }
 
 /**
@@ -229,6 +234,8 @@ export type StripRow =
 export interface StripWidgetComponent {
     render(width: number): string[];
     handleMouse?(event: StripMouseEvent): StripMouseResult | undefined;
+    /** Expand-mode keys, routed through the terminal-input listener. */
+    handleKey?(data: string): boolean;
     invalidate(): void;
     dispose?(): void;
 }

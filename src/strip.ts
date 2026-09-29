@@ -56,9 +56,6 @@ const STATE_STYLE: Record<StripState, { glyph: string; slot: string }> = {
     killed: { glyph: "⊘", slot: "muted" },
 };
 
-/** Terminal states are past tense — render them de-emphasised. */
-const QUIET_STATES: ReadonlySet<StripState> = new Set(["completed", "killed"]);
-
 /**
  * States that are an EXCEPTION rather than normal progress. These colour the
  * WHOLE row, not just the glyph: one coloured character ahead of plain text is
@@ -92,10 +89,19 @@ const STRIP_GAP = 2;
 type StripJobRow = Extract<StripRow, { kind: "job" }>;
 
 /** What is on one rendered line. Built once in layout(), read by render + hit. */
+/** A clickable span on one rendered line: absolute columns. */
+interface ButtonRange {
+    x: number;
+    width: number;
+}
+
 type StripLine =
     | { kind: "grid"; rowIndices: number[]; cellW: number }
     | { kind: "detail"; lines: string[]; hints: DetailHint[] }
-    | { kind: "toggle" };
+    | { kind: "footer"; text: string; toggle?: ButtonRange; monitor: ButtonRange };
+
+/** True when column `x` falls inside a clickable span. */
+const inRange = (x: number, r: ButtonRange): boolean => x >= r.x && x < r.x + r.width;
 
 /** Actions reachable from the detail block's hint line — mouse parity for the
  *  keys, so the block is usable without touching the keyboard. */
@@ -112,7 +118,7 @@ interface DetailHint {
 /** What a click landed on. */
 type StripHit =
     | { kind: "job"; row: StripJobRow }
-    | { kind: "toggle" }
+    | { kind: "footer"; target: "toggle" | "monitor" }
     | { kind: "detail"; row: StripJobRow; action: DetailAction };
 
 /** Cells per line for a given width. */
@@ -163,6 +169,10 @@ class StripComponent implements StripWidgetComponent {
      *  then opened whichever job had landed on that row index. This mirrors
      *  Pi's SelectList: `press` records the target only, `click` activates. */
     private pressed: StripHit | undefined;
+    /** Id of the button under the pointer ("monitor", or a detail action).
+     *  Presentation only — the registry never hears about pointer movement, so
+     *  hover cannot churn job state. */
+    private hovered: string | undefined;
 
     constructor(getRows: () => StripRow[], theme: StripTheme, actions: StripActions) {
         this.getRows = getRows;
@@ -174,19 +184,54 @@ class StripComponent implements StripWidgetComponent {
         this.tui = tui;
     }
 
+    /** Pi's full theme has bg slots; the narrow StripTheme may not. */
+    private bg(slot: string, text: string): string {
+        return this.theme.bg ? this.theme.bg(slot, text) : text;
+    }
+
+    /** A clickable button: filled when idle, highlighted under the pointer. */
+    private pill(id: string, label: string): string {
+        const text = ` ${label} `;
+        return this.hovered === id
+            ? this.bg("toolPendingBg", this.theme.fg("accent", text))
+            : this.bg("selectedBg", this.theme.fg("text", text));
+    }
+
+    /** Id of the button under the pointer, or undefined. Hover only. */
+    private buttonAt(event: StripMouseEvent): string | undefined {
+        const { lines } = this.layout(this.lastWidth);
+        let acc = 0;
+        for (const entry of lines) {
+            const height = entry.kind === "detail" ? entry.lines.length : 1;
+            if (event.y < acc + height) {
+                const offset = event.y - acc;
+                if (entry.kind === "footer") {
+                    if (inRange(event.x, entry.monitor)) return "monitor";
+                    if (entry.toggle && inRange(event.x, entry.toggle)) return "toggle";
+                    return undefined;
+                }
+                if (entry.kind === "detail" && offset === entry.lines.length - 1) {
+                    return entry.hints.find((h) => inRange(event.x, h))?.action;
+                }
+                return undefined;
+            }
+            acc += height;
+        }
+        return undefined;
+    }
+
     /**
      * Everything render() and hitAt() need, computed once.
      *
      * Collapsed shows the first `STRIP_VISIBLE_LINES × columns` running rows.
      * Stalled and failed ride along WITHOUT consuming that budget, so healthy
      * work can never squeeze out an outstanding decision. Completed and killed
-     * are expanded-only.
+     * never reach this list at all.
      */
     private layout(width: number): {
         rows: StripRow[];
         cols: number;
         lines: StripLine[];
-        toggleText: string | undefined;
     } {
         const all = this.getRows();
         const cols = columnCount(width);
@@ -227,6 +272,9 @@ class StripComponent implements StripWidgetComponent {
             }
         }
 
+        // Footer: the list toggle (when there is one) plus the monitor button.
+        // Both ranges are computed HERE, beside the text that produced them, so
+        // render() and hitAt() cannot disagree about where a button sits.
         let toggleText: string | undefined;
         if (!this.actions.listExpanded()) {
             const hidden = all.length - rows.length;
@@ -234,9 +282,19 @@ class StripComponent implements StripWidgetComponent {
         } else if (all.length > STRIP_VISIBLE_LINES * cols) {
             toggleText = "▴ collapse";
         }
-        if (toggleText) lines.push({ kind: "toggle" });
+        const togglePill = toggleText ? this.pill("toggle", toggleText) : "";
+        const monitorPill = this.pill("monitor", "⌗ monitor");
+        const toggleW = visibleWidth(togglePill);
+        const monitorW = visibleWidth(monitorPill);
+        const gap = " ".repeat(Math.max(1, width - toggleW - monitorW));
+        lines.push({
+            kind: "footer",
+            text: togglePill + gap + monitorPill,
+            toggle: toggleText ? { x: 0, width: toggleW } : undefined,
+            monitor: { x: toggleW + gap.length, width: monitorW },
+        });
 
-        return { rows, cols, lines, toggleText };
+        return { rows, cols, lines };
     }
 
     /** Apply the line budget to the full row list. */
@@ -271,13 +329,13 @@ class StripComponent implements StripWidgetComponent {
     }
 
     render(width: number): string[] {
-        const { rows, lines, toggleText } = this.layout(width);
+        const { rows, lines } = this.layout(width);
         this.lastWidth = width;
 
         const out: string[] = [];
         for (const line of lines) {
-            if (line.kind === "toggle") {
-                if (toggleText) out.push(truncateToWidth(this.theme.fg("dim", toggleText), width));
+            if (line.kind === "footer") {
+                out.push(truncateToWidth(line.text, width));
                 continue;
             }
             if (line.kind === "detail") {
@@ -303,11 +361,7 @@ class StripComponent implements StripWidgetComponent {
         const marker = this.actions.expandedJobId() === row.job.id ? "▼" : glyph;
         const head = this.theme.fg(slot, marker);
         const bodyPlain = `${fit(row.name, STRIP_NAME_W)} ${fit(row.elapsed, STRIP_ELAPSED_W)} ${row.detail}`;
-        const body = QUIET_STATES.has(row.state)
-            ? this.theme.fg("dim", bodyPlain)
-            : LOUD_STATES.has(row.state)
-              ? this.theme.fg(slot, bodyPlain)
-              : bodyPlain;
+        const body = LOUD_STATES.has(row.state) ? this.theme.fg(slot, bodyPlain) : bodyPlain;
         return truncateToWidth(`${head} ${body}`, contentW);
     }
 
@@ -339,23 +393,24 @@ class StripComponent implements StripWidgetComponent {
             );
         }
 
-        // The hint line doubles as a toolbar: each label is a click target, so
-        // kill / next / modal are reachable by mouse. No extra row is added.
-        const segments: Array<[DetailAction, string]> = [
-            ["collapse", "esc close"],
-            ["next", "j/k next"],
-            ["kill", "x kill"],
-            ["modal", "o modal"],
+        // The last line is a toolbar: each button is a click target, so cancel /
+        // next / kill / monitor are reachable by mouse. No extra row is added.
+        const segments: Array<[DetailAction, string, string]> = [
+            ["collapse", "esc", "cancel"],
+            ["next", "j/k", "next"],
+            ["kill", "x", "kill"],
+            ["modal", "o", "monitor"],
         ];
         const origin = indent + 5;
         const hints: DetailHint[] = [];
         let text = "";
-        for (const [index, [action, label]] of segments.entries()) {
-            if (index > 0) text += " · ";
-            hints.push({ action, x: origin + text.length, width: label.length });
-            text += label;
+        for (const [index, [action, key, label]] of segments.entries()) {
+            if (index > 0) text += " ";
+            const pill = this.pill(action, `${key} ${label}`);
+            hints.push({ action, x: origin + visibleWidth(text), width: visibleWidth(pill) });
+            text += pill;
         }
-        lines.push(truncateToWidth(pad + this.theme.fg("dim", `     ${text}`), width));
+        lines.push(truncateToWidth(pad + "     " + text, width));
 
         return { lines, hints };
     }
@@ -387,7 +442,13 @@ class StripComponent implements StripWidgetComponent {
             acc += height;
         }
         if (!line) return undefined;
-        if (line.kind === "toggle") return { kind: "toggle" };
+        if (line.kind === "footer") {
+            if (inRange(event.x, line.monitor)) return { kind: "footer", target: "monitor" };
+            if (line.toggle && inRange(event.x, line.toggle)) {
+                return { kind: "footer", target: "toggle" };
+            }
+            return undefined;
+        }
 
         const expandedId = this.actions.expandedJobId();
         const expanded = rows.find(
@@ -425,6 +486,16 @@ class StripComponent implements StripWidgetComponent {
         if (event.type === "wheel") return undefined;
         // Only a left press/click is ours; right/middle stay unhandled.
         if (event.button !== "left") return undefined;
+
+        // Hover: highlight whatever button the pointer is over, and repaint only
+        // when the highlight actually moves.
+        if (event.type === "move") {
+            const next = this.buttonAt(event);
+            if (next === this.hovered) return { handled: true };
+            this.hovered = next;
+            return { handled: true, render: true };
+        }
+
         if (event.type !== "press" && event.type !== "click") return undefined;
 
         // Record the resolved TARGET on press, not the raw coordinates: the
@@ -439,8 +510,9 @@ class StripComponent implements StripWidgetComponent {
         this.pressed = undefined;
         if (hit === undefined) return undefined;
 
-        if (hit.kind === "toggle") {
-            this.actions.toggleList();
+        if (hit.kind === "footer") {
+            if (hit.target === "monitor") this.actions.openMonitor();
+            else this.actions.toggleList();
             return { handled: true };
         }
 
@@ -511,11 +583,13 @@ class StripComponent implements StripWidgetComponent {
      */
     handleKey(data: string): boolean {
         // Nothing expanded: every key belongs to the editor. Without this guard
-        // the listener — registered for the whole session — would swallow `q` and
-        // Escape even with no row open, permanently breaking normal typing.
+        // the listener — registered for the whole session — would swallow Escape
+        // even with no row open, permanently breaking normal typing.
         if (!this.actions.expandedJobId()) return false;
 
-        if (isKey(data, "escape") || data === "q") {
+        // Esc is the ONLY cancel. `q` used to do the same, which made a normal
+        // keystroke destructive whenever a row happened to be open.
+        if (isKey(data, "escape")) {
             this.actions.expand(undefined);
             return true;
         }

@@ -713,6 +713,31 @@ with a "quiet" notice, so nothing is silent — it just isn't proxied through a
 rewritten pipeline any more. One log, one read (`jobs output` = last 12 000 bytes
 of exactly what the command printed).
 
+## Change 14 — the strip is a live-task list with buttons
+
+The task list above the editor was a status board for everything, including work
+that had already finished. It now shows only what still needs eyes:
+
+- **Rows:** running, stalled, failed. `completed`/`killed` NEVER appear (the
+  completion notice owns finished work), and the status line drops its
+  `✓ n done` counter to match. `STRIP_POOL_MAX` and the completed-row pool are
+  gone, as is the "keep the expanded row visible after it finishes" pin — a
+  finished row cannot exist to pin.
+- **Always installed:** the widget is no longer torn down when there are no rows,
+  because it hosts the monitor button. Idle, it renders one line: `⌗ monitor`.
+  Non-TUI modes still hide the widget, and treat "nothing to show" as the same
+  state as `undefined` so no redundant `setWidget` call is made.
+- **Cancel is `esc` only.** `q` was removed: a one-key destructive action that
+  could fire on a normal keystroke was not worth the shortcut.
+- **Buttons, not hint text.** The expanded row's toolbar is four bg pills with
+  hover highlight (`esc cancel` · `j/k next` · `x kill` · `o monitor`), and the
+  footer carries a `⌗ monitor` button that opens the Task Monitor. Ranges are
+  computed in `layout()` beside the text that produced them, so `render()` and
+  `hitAt()` cannot disagree, and hover lives in the component — the registry
+  never sees pointer movement.
+- `StripTheme.bg?` and `StripActions.openMonitor()` were added; `StripActions`
+  callers are unchanged.
+
 ## Environment override
 
 ```sh
@@ -725,7 +750,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.33-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.35-pi15
 ```
 
 ## Rebase onto a newer upstream release

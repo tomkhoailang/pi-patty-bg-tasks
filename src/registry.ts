@@ -24,10 +24,6 @@ import { LOG_DIR, recordRuntimeJob } from "./runtime.ts";
 import { DETAIL_TAIL_LINES, STRIP_VISIBLE_LINES, createStripWidget } from "./strip.ts";
 import { openTaskMonitor } from "./task-monitor.ts";
 
-/** Upper bound on the completed/killed pool the strip may draw from. Only
- *  reached when expanded — it exists so a long session cannot accumulate an
- *  unbounded row list. */
-const STRIP_POOL_MAX = 20;
 /** Bytes of log tail read for the inline detail block. */
 const DETAIL_TAIL_CHARS = 400;
 
@@ -250,7 +246,9 @@ function byFinishDesc(a: Job, b: Job): number {
  * render() and hit-test both apply that budget through one shared function so
  * they cannot disagree about what is visible.
  *
- * Order is canonical: running, then the pinned buckets, then quiet history.
+ * Order is canonical: running, then stalled, then failed. Finished jobs
+ * (`completed`, `killed`) NEVER appear: the strip is for work that still needs
+ * eyes or a decision, and the completion notice already reports the rest.
  */
 function buildStripRows(reg: BackgroundRegistry): StripRow[] {
     const jobs = Array.from(reg.jobs.values());
@@ -268,13 +266,7 @@ function buildStripRows(reg: BackgroundRegistry): StripRow[] {
         .sort(byFinishDesc)
         .map((job) => jobRow(job, "failed"));
 
-    const quiet = jobs
-        .filter((job) => job.status === "completed")
-        .sort(byFinishDesc)
-        .slice(0, STRIP_POOL_MAX)
-        .map((job) => jobRow(job, "completed"));
-
-    return [...running, ...stalled, ...failed, ...quiet];
+    return [...running, ...stalled, ...failed];
 }
 
 /**
@@ -301,17 +293,12 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
     const isTui = ctx.mode === "tui";
 
     if (rows.length === 0) {
+        // Nothing but the footer's monitor button to show. Stop the ticker and
+        // drop any stale expansion, but KEEP the widget installed: it hosts the
+        // button, so tearing it down here would make the modal unreachable
+        // whenever no job happens to be running.
         stopSidebarTicker(reg);
-        if (reg.stripInstalled || reg.lastSidebarContent !== undefined || reg.lastStatusText !== undefined) {
-            reg.stripInstalled = false;
-            reg.stripTui = undefined;
-            reg.stripExpandedJob = undefined;
-            reg.lastSidebarContent = undefined;
-            reg.lastStatusText = undefined;
-            ctx.ui.setWidget("background-jobs", undefined);
-            ctx.ui.setStatus("background-jobs", undefined);
-        }
-        return;
+        reg.stripExpandedJob = undefined;
     }
 
     if (isTui) {
@@ -337,6 +324,7 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                             reg.stripExpandedJob = undefined;
                             renderSidebar(reg, ctx);
                         },
+                        openMonitor: () => { void openTaskMonitor(reg, ctx, "all"); },
                         expandedJobId: () => reg.stripExpandedJob,
                         listExpanded: () => reg.stripExpanded,
                         detail: stripDetail,
@@ -354,10 +342,12 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
             .map((row) =>
                 row.kind === "toggle" ? row.text : `▶ ${row.name}: ${row.detail} (${row.elapsed})`
             );
-        const key = shown.join("\n");
+        const key = shown.length ? shown.join("\n") : undefined;
         if (key !== reg.lastSidebarContent) {
             reg.lastSidebarContent = key;
-            ctx.ui.setWidget("background-jobs", shown);
+            // No button outside the TUI, so hide the widget when there is nothing
+            // to show (`undefined` and "nothing shown" are the same state).
+            ctx.ui.setWidget("background-jobs", key === undefined ? undefined : shown);
         }
     }
 
@@ -366,8 +356,8 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
     if (runningCount > 0) parts.push(ctx.ui.theme.fg("accent", `▶ ${runningCount} running`));
     if (stalledCount > 0) parts.push(ctx.ui.theme.fg("warning", `⚠ ${stalledCount} stalled`));
     if (failedCount > 0) parts.push(ctx.ui.theme.fg("error", `✗ ${failedCount} failed`));
-    if (reg.completedCount > 0) parts.push(ctx.ui.theme.fg("dim", `✓ ${reg.completedCount} done`));
-    const statusText = parts.join(ctx.ui.theme.fg("dim", " · "));
+    // No finished counter: finished jobs are the completion notice's business.
+    const statusText = parts.length > 0 ? parts.join(ctx.ui.theme.fg("dim", " · ")) : undefined;
 
     if (statusText !== reg.lastStatusText) {
         reg.lastStatusText = statusText;
