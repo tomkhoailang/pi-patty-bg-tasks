@@ -57,6 +57,9 @@ interface MonitorTheme extends StripTheme {
 const ANSI = /\x1b\[[0-9;]*m/g;
 const strip = (s: string): string => s.replace(ANSI, "");
 
+/** At most one monitor is live; a stale instance must not keep polling. */
+let activeTicker: ReturnType<typeof setInterval> | undefined;
+
 const time = (job: Job): string =>
     new Date(job.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -149,6 +152,9 @@ export class TaskMonitor implements Component {
         this.updateOutput(true);
         this.ticker = setInterval(() => this.tick(), POLL_MS);
         this.ticker.unref?.();
+        // Singleton: a previous monitor (stacked overlay) stops polling.
+        if (activeTicker) clearInterval(activeTicker);
+        activeTicker = this.ticker;
     }
 
     dispose(): void {
@@ -156,7 +162,11 @@ export class TaskMonitor implements Component {
     }
 
     private clearTicker(): void {
-        if (this.ticker) { clearInterval(this.ticker); this.ticker = undefined; }
+        if (this.ticker) {
+            clearInterval(this.ticker);
+            if (activeTicker === this.ticker) activeTicker = undefined;
+            this.ticker = undefined;
+        }
     }
 
     private close(): void {

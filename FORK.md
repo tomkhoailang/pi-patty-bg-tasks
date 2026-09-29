@@ -656,6 +656,19 @@ replacing the empty `openStripPanel` placeholder:
 - The strip no longer lists **killed** jobs — they live in the monitor's `killed`
   filter.
 
+## Change 10 — orphan reaper + monitor ticker guard
+
+- **Orphan reaper.** Background jobs spawn `detached` (own process group), so they
+  survive pi. On an unclean exit (SIGKILL / crash / terminal close) nothing kills
+  them, and the only 100 MiB log cap lives in the dead pi process, so an orphan
+  can run forever with an unbounded log. On the next start, `reviveAndValidate`
+  now reaps a prior-pi job whose process group is still alive: Linux-only, and it
+  only signals when the group leader's `/proc/<pid>/cmdline` still looks like one
+  of our shells/runners (pid-reuse guard).
+- **Monitor ticker singleton.** At most one Task Monitor polls: creating a new one
+  clears the previous interval, and `clearTicker()` only clears the interval it
+  owns, so a stacked/stale overlay can't leak a 1 s timer.
+
 ## Environment override
 
 ```sh
@@ -668,7 +681,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.30-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.31-pi15
 ```
 
 ## Rebase onto a newer upstream release

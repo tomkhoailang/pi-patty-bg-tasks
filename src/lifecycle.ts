@@ -6,7 +6,7 @@
  * Monitoring (progress polling, stall detection) lives in monitoring.ts.
  */
 
-import { statSync as fsStatSync } from "node:fs";
+import { readFileSync, statSync as fsStatSync } from "node:fs";
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join as pathJoin } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -478,6 +478,25 @@ export function detectBlockedSleep(command: string): string | null {
  * Validate a job rehydrated from a serialized session entry. If the PID is
  * dead, force the job to a terminal state.
  */
+/**
+ * Best-effort reap of a process group left behind by a PREVIOUS pi process
+ * (crash / SIGKILL / terminal close). Such an orphan keeps running with no
+ * stall watcher, so its log can grow past the 100 MiB cap. Guarded so we never
+ * signal an unrelated process: Linux only, and only when the group leader's
+ * cmdline still looks like one of our shells/runners (pid-reuse guard).
+ */
+function reapOrphanProcessGroup(pid: number): void {
+    if (process.platform !== "linux") return;
+    let cmdline: string;
+    try {
+        cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim();
+    } catch {
+        return; // /proc entry gone — already exited
+    }
+    if (!/\b(bash|sh|script)\b/.test(cmdline)) return;
+    killProcessTree(pid, "SIGTERM");
+}
+
 export function reviveAndValidate(
     _reg: BackgroundRegistry,
     job: Job
@@ -498,6 +517,11 @@ export function reviveAndValidate(
     // process. Job ids are `job-<spawning-pid>-<n>`.
     const spawnedPid = Number.parseInt(job.id.split("-")[1] ?? "", 10);
     if (spawnedPid !== process.pid || !processExists(job.pid)) {
+        // A job from a previous pi. If its process group is somehow still alive
+        // (unclean exit), reap it: it has no watcher and no log cap.
+        if (spawnedPid !== process.pid && job.pid > 0 && processExists(job.pid)) {
+            reapOrphanProcessGroup(job.pid);
+        }
         markTerminal(job, "failed");
         return "completed";
     }
