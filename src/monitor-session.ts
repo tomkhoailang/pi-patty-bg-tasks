@@ -128,7 +128,7 @@ export function startMonitorSession(args: {
         job,
         exit: source.exit,
         shouldNotify: false,
-        disablePromptStall: true,
+        disableQuietWatch: true,
         disableOversizeKill: persistent,
         onExit: (code) => {
             let summary: string;

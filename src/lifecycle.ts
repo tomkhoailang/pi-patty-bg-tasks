@@ -50,9 +50,9 @@ export function startBackgroundJob(args: {
     job: Job;
     exit: Promise<number | null>;
     shouldNotify?: boolean;
-    /** Suppress the interactive-prompt stall heuristic (monitors stream their
-     *  own output, so a quiet tail is normal, not a stuck prompt). */
-    disablePromptStall?: boolean;
+    /** Suppress the quiet watch (monitors stream their own output, so a quiet
+     *  tail is normal rather than a stall). */
+    disableQuietWatch?: boolean;
     /** Suppress the oversize auto-kill (persistent log tails are expected to
      *  grow without bound). */
     disableOversizeKill?: boolean;
@@ -65,10 +65,10 @@ export function startBackgroundJob(args: {
         command: args.job.command,
         logPath: args.job.logPath,
         pi: args.pi,
-        disablePromptStall: args.disablePromptStall,
+        disableQuietWatch: args.disableQuietWatch,
         disableOversizeKill: args.disableOversizeKill,
         onOversize: () => terminateJobSilently(args.reg, args.job),
-        onStall: () => { args.job.stalled = true; },
+        onQuiet: () => { args.job.stalled = true; },
     });
     jobAc.signal.addEventListener("abort", cancelStall, { once: true });
     void args.exit.then((code) => {

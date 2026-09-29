@@ -592,6 +592,24 @@ spawn and is not rewritten.
 `FORK.md` note: the `pty` flag is per-call (`bash_bg`/`run_in_background`); auto-
 PTY covers the common dev/build/test runners.
 
+## Change 8 — activity-based quiet notices (not a prompt regex)
+
+The stall watcher used to warn only when a job stopped printing **and** its tail
+matched an interactive-prompt regex (`looksLikePrompt`). That missed the two real
+cases — a job that is quietly working, and a job that is hung without printing a
+prompt — and could false-fire on any output that merely looked like a prompt.
+
+It now watches **output activity only**:
+
+- Producing (log grew within `QUIET_MS`) → nothing.
+- Quiet for `QUIET_MS` (default 60s) → one "no output for Ns (still running)"
+  notice, re-armed the moment output resumes (one per quiet episode).
+- Quiet for `QUIET_LONG_MS` (default 5m) → a `job_decide keep|kill|check` prompt.
+- `looksLikePrompt` is demoted to a **hint** appended to the quiet notice.
+
+Silence never kills a job; only the 100 MiB oversize guard terminates. Thresholds
+are env-configurable: `PI_PATTY_BG_QUIET_MS`, `PI_PATTY_BG_QUIET_LONG_MS`.
+
 ## Environment override
 
 ```sh
@@ -604,7 +622,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.13-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.14-pi15
 ```
 
 ## Rebase onto a newer upstream release

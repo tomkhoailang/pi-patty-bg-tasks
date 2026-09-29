@@ -22,7 +22,17 @@ export const DEFAULT_TIMEOUT_MS =
 export const QUICK_COMPLETION_MS = 2_000;
 export const FOREGROUND_TAIL_BYTES = 4_096;
 export const STALL_CHECK_INTERVAL_MS = 5_000;
-export const STALL_THRESHOLD_MS = 45_000;
+/** Quiet (no-output) watch thresholds for a running background job. The soft
+ *  one emits a single "no output for Ns" notice (cleared when output resumes);
+ *  the long one escalates to a keep/kill/check decision prompt. Output silence
+ *  alone never kills a job. Override with PI_PATTY_BG_QUIET_MS /
+ *  PI_PATTY_BG_QUIET_LONG_MS. */
+const ENV_QUIET_MS = Number(process.env.PI_PATTY_BG_QUIET_MS);
+export const QUIET_MS =
+    Number.isFinite(ENV_QUIET_MS) && ENV_QUIET_MS > 0 ? ENV_QUIET_MS : 60_000;
+const ENV_QUIET_LONG_MS = Number(process.env.PI_PATTY_BG_QUIET_LONG_MS);
+export const QUIET_LONG_MS =
+    Number.isFinite(ENV_QUIET_LONG_MS) && ENV_QUIET_LONG_MS > 0 ? ENV_QUIET_LONG_MS : 300_000;
 export const STALL_TAIL_BYTES = 1024;
 export const MAX_LOG_BYTES = 100 * 1024 * 1024;
 export const OUTPUT_PREVIEW_CHARS = 12_000;
