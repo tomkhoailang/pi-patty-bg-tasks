@@ -114,6 +114,15 @@ export function completeJob(args: {
     const finished = args.job;
     abortJob(args.reg, finished.id);
     markTerminal(finished, statusFromExit(args.code), args.code ?? undefined);
+    // cancelOnActivity parity: a heartbeat timer stops as soon as real work
+    // finishes, instead of firing into an idle session.
+    for (const other of args.reg.jobs.values()) {
+        if (other.id === finished.id) continue;
+        if (other.kind === "timer" && other.cancelOnActivity && other.status === "running") {
+            markTerminal(other, "killed");
+            args.reg.jobs.delete(other.id);
+        }
+    }
     if (args.shouldNotify !== false) {
         notifyFinished({ job: finished, reg: args.reg, pi: args.pi, ctx: args.ctx });
     }
@@ -496,6 +505,10 @@ export function reviveAndValidate(
     job: Job
 ): "alive" | "completed" {
     if (job.status !== "running") return "completed";
+    // A timer has no process to check: it is pure state (a due time), so it is
+    // always revived. Its overdue fire is handled by fireMissedSchedules at
+    // session start, which collapses missed windows into ONE late fire.
+    if (job.kind === "timer") return "alive";
     // A ws monitor (pid 0) has no process to revive — its socket cannot survive
     // a restart — so it is always terminal. A command monitor falls through to
     // the generic pid-liveness check below: if its child is still alive in this

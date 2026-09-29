@@ -34,6 +34,8 @@ import {
 } from "./types.ts";
 import { registerBashTool } from "./tools/bash.ts";
 import { openTaskMonitor } from "./task-monitor.ts";
+import { registerScheduleTool } from "./tools/schedule.ts";
+import { fireMissedSchedules, startScheduler } from "./scheduler.ts";
 import { registerBashBgTool } from "./tools/bash-bg.ts";
 import { registerJobsTool } from "./tools/jobs.ts";
 import { registerJobDecideTool } from "./tools/job-decide.ts";
@@ -69,6 +71,7 @@ export default function (pi: ExtensionAPI): void {
     registerJobDecideTool(pi, reg);
     registerAgentBgTool(pi, reg);
     registerMonitorTool(pi, reg);
+    registerScheduleTool(pi, reg);
 
     // ── Shortcuts / commands ──────────────────────────────────────
     registerShortcuts(pi, reg);
@@ -141,6 +144,11 @@ export default function (pi: ExtensionAPI): void {
         // running; nothing, however, ever installed it on a fresh session.)
         renderSidebar(reg, ctx as unknown as UiContext);
 
+        // Schedules are jobs, so a restored one whose time already passed fires
+        // ONCE (marked late) before the clock starts ticking normally.
+        fireMissedSchedules(reg, pi, ctx as unknown as UiContext);
+        reg.stopScheduler = startScheduler(reg, pi, ctx as unknown as UiContext);
+
         // Expand-mode keys arrive here rather than through component focus. An
         // input listener runs BEFORE the focused-component dispatch and can
         // consume, so the editor keeps keyboard focus throughout and typing can
@@ -170,6 +178,9 @@ export default function (pi: ExtensionAPI): void {
 
     // ── Session shutdown ──────────────────────────────────────────
     pi.on("session_shutdown", async (event, _ctx) => {
+        // Stop the clock so no timer fires into a dead session.
+        reg.stopScheduler?.();
+        reg.stopScheduler = undefined;
         // Stop the live-duration ticker so the interval doesn't outlive the session.
         stopSidebarTicker(reg);
         // Drop any open completion-coalescing window (its notice would never render).

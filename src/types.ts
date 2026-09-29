@@ -98,7 +98,30 @@ export type JobStatus = "running" | "completed" | "failed" | "killed";
 
 /** What kind of background job this is. "shell" is the default (bash/bash_bg/
  *  agent_bg); "monitor" is a streaming-event watch (the monitor tool). */
-export type JobKind = "shell" | "monitor";
+export type JobKind = "shell" | "monitor" | "timer";
+
+/** What a scheduled timer needs to know. A timer is a JOB (kind "timer"): no
+ *  process, no log — just a due time — so the registry, strip, monitor, `jobs
+ *  list|kill`, persistence and reaper all work on it unchanged. */
+export interface TimerSpec {
+    /** Next due time, ms since epoch. */
+    fireAt: number;
+    /** Repeat interval; omit for a one-shot. */
+    everyMs?: number;
+    /** Text to run on fire (sent as a user-shaped message, so it wakes the agent). */
+    prompt?: string;
+    /** Human label shown in the strip / jobs list. */
+    reason?: string;
+    /** Stop after this many fires (MaxIterations parity). */
+    maxFires?: number;
+    /** Cancel when any other job completes (TimerCondition parity). */
+    cancelOnActivity?: boolean;
+}
+
+/** Timer tick cadence and the per-tick fire cap: a fire is a wake, so a burst of
+ *  due timers must not become a wall of turns. */
+export const SCHED_TICK_MS = 1_000;
+export const SCHED_MAX_FIRES_PER_TICK = 3;
 
 export interface Job {
     id: string;
@@ -129,6 +152,22 @@ export interface Job {
     /** Wall-clock finish time, stamped when queued for a completion notice so a
      *  coalesced notice reports the true duration, not the flush time. */
     endedAt?: number;
+
+    // --- kind === "timer" only ---------------------------------------------
+    /** Next due time (ms since epoch). */
+    fireAt?: number;
+    /** Repeat interval; absent for a one-shot. */
+    everyMs?: number;
+    /** Text to run on fire. */
+    prompt?: string;
+    /** Human label for the timer. */
+    reason?: string;
+    /** Stop after this many fires. */
+    maxFires?: number;
+    /** Cancel when any other job completes. */
+    cancelOnActivity?: boolean;
+    /** How many times this timer has already fired. */
+    fired?: number;
 }
 
 export type BackgroundReason = "manual" | "timeout";
@@ -158,6 +197,7 @@ export const EVENT = {
     agentResume: "agent-resume",
     jobFinished: "job-finished",
     monitorEvent: "bg-monitor-event",
+    scheduleFired: "bg-schedule-fired",
 } as const;
 
 export type EventName = (typeof EVENT)[keyof typeof EVENT];

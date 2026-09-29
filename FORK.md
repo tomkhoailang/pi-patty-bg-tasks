@@ -934,6 +934,37 @@ Every rule moved into the tool descriptions, where it is read once:
 `src/__tests__/contract.test.ts` pins the wording, including a source-level guard
 that the hand-off result stays facts-only.
 
+## Change 26 — `schedule`: timers as jobs
+
+§7 of `docs/antigravity-background-tasks.md` left one hole with no workaround: the
+agent could not defer work ("re-check the deploy in 10 minutes"), and the sleep
+guard blocks the shell-level version of it. Antigravity has a scheduler; this is
+ours, deliberately built as **a job of `kind: "timer"`** rather than a subsystem.
+
+Because a timer is a job (no process, no log — just a due time), everything already
+built keeps working on it: the strip shows the row, `jobs list|kill` manages it,
+`cleanup` sweeps it, the session snapshot makes it durable, and the notify rules
+from Change 24 deliver its fire (mid-turn injection costs nothing; an idle fire is
+allowed to wake the agent, which is the whole point of a schedule).
+
+- **Tool**: `schedule({ in | at | every, prompt?, reason?, maxFires?, cancelOnActivity? })`.
+  `every` takes a duration (`30s`, `5m`, `2h`, `1d`) or a 5-field cron expression;
+  the parser supports `*`, `a`, `a,b`, `a-b` and `/step` per field, in local time.
+- **Fire**: a notice, plus `sendUserMessage(prompt)` when a prompt is set (a prompt
+  must wake the agent — the `ScheduleWakeup` equivalent). Fires that come due in
+  one tick are capped (`SCHED_MAX_FIRES_PER_TICK`) because a fire is a wake.
+- **Bounded**: `maxFires` (Antigravity's `MaxIterations`) and `cancelOnActivity`
+  (their `TimerCondition`): a heartbeat timer dies as soon as any other job
+  completes.
+- **Durable, without replays**: a restored timer whose time passed while pi was down
+  fires **once**, marked late (`fireMissedSchedules`). Replaying an hour of missed
+  ticks into a wall of turns is exactly what we refuse to do.
+- `jobs attach` does not wait on a timer — there is no process to outlive, and
+  waiting would only hold the turn open.
+
+Not copied: `IsDaemon` (no daemon tier — see the README limits) and per-fire raw
+output in the notice.
+
 ## Environment override
 
 ```sh
@@ -946,7 +977,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.46-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.47-pi15
 ```
 
 ## Rebase onto a newer upstream release

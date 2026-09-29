@@ -18,6 +18,9 @@ export class BackgroundRegistry {
 
     nonInteractive = false;
 
+    /** Stop function for the scheduler clock (set while the session runs). */
+    stopScheduler: (() => void) | undefined = undefined;
+
     completedCount = 0;
     failedCount = 0;
     totalStarted = 0;
