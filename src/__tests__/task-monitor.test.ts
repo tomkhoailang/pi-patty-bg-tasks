@@ -59,7 +59,7 @@ describe("TaskMonitor", () => {
         assert.ok(lines.some((l) => l.includes("│"))); // pane divider
     });
 
-    test("filter keys narrow the list; enter moves focus to output; esc closes", () => {
+    test("filter keys narrow the list; typing searches; esc closes", () => {
         const running = job({ id: "job-1-a" });
         const done = job({ id: "job-1-b", status: "completed" });
         let closed = false;
@@ -71,11 +71,13 @@ describe("TaskMonitor", () => {
         // Selected running job's output header is shown in the right pane.
         assert.ok(m.render(100).join("\n").includes("cargo build --release"));
 
-        m.handleInput("q"); // q is a search char now — must NOT close
+        m.handleInput("q"); // a search char — must NOT close
         assert.equal(closed, false);
-        m.handleInput("\r"); // enter -> focus output
-        m.handleInput("j"); // scroll output
-        m.handleInput("\x1b"); // esc -> close
+        // There is no focus mode: Enter no longer switches panes, and `esc` is
+        // the only close.
+        m.handleInput("\r");
+        assert.equal(closed, false);
+        m.handleInput("\x1b");
         assert.equal(closed, true);
     });
 

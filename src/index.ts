@@ -21,7 +21,7 @@ import {
     reviveAndValidate,
     terminateJobSilently,
 } from "./lifecycle.ts";
-import { forget as forgetJob, stopSidebarTicker } from "./registry.ts";
+import { forget as forgetJob, renderSidebar, stopSidebarTicker } from "./registry.ts";
 import { reapRuntimeOrphans } from "./runtime.ts";
 import { cancelPendingNotices, noteAgentEnd, noteAgentStart } from "./notify.ts";
 import {
@@ -131,6 +131,12 @@ export default function (pi: ExtensionAPI): void {
         }
 
         void cleanupStaleRuntimeArtifacts();
+
+        // Install the widget up front so the strip exists on an EMPTY session:
+        // it hosts the `⌗ monitor` button, which must not depend on a job having
+        // ever run. (v1.6.35 stopped tearing the widget down when nothing is
+        // running; nothing, however, ever installed it on a fresh session.)
+        renderSidebar(reg, ctx as unknown as UiContext);
 
         // Expand-mode keys arrive here rather than through component focus. An
         // input listener runs BEFORE the focused-component dispatch and can

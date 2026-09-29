@@ -754,6 +754,20 @@ that had already finished. It now shows only what still needs eyes:
   with nothing expanded `handleKey()` returns false on its first line and every
   key flows through.
 
+## Change 16 — monitor button on an empty session; no focus mode in the modal
+
+- **The strip is installed at `session_start`.** Until now nothing called
+  `renderSidebar` on a fresh session, so the widget (and its `⌗ monitor` button)
+  only appeared once a job had existed. v1.6.35 stopped *tearing down* the widget
+  when idle; this is the other half — actually installing it up front.
+- **The modal's focus mode is gone.** `focus: "list" | "output"` and its `⏎
+  output` action only bought keyboard paging of the log, which
+  `Home`/`End`/`PageUp`/`PageDown` already do without a mode. Removed: the field,
+  the `handleInput` branch, `actOutput()`, the `⏎ output` footer pill, and the
+  list-only search caret. `handleOutputKey` → `scrollOutputKey` (no escape/enter
+  branches). The action bar is now `x kill · c copy · d remove`, and the log
+  keeps scrolling by page/home/end.
+
 ## Environment override
 
 ```sh
@@ -766,7 +780,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.36-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.37-pi15
 ```
 
 ## Rebase onto a newer upstream release

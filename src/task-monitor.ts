@@ -3,7 +3,7 @@
  *
  *   ╭──────────────────────────────────────────────────────────────╮
  *   │  Task Monitor      ▶ 2 running · ✗ 1 failed         esc ✕     │
- *   │  x kill · c copy · d remove · ⏎ output   ↑↓ · ⇥ filter        │
+ *   │  x kill · c copy · d remove   ↑↓ · ⇥ filter · type to search │
  *   │  Search: ▏                                                   │
  *   │ → ▶ cargo build   ┃  ▶ cargo build --release   running 2m41s │
  *   ╰──────────────────────────────────────────────────────────────╯
@@ -107,7 +107,6 @@ export class TaskMonitor implements Component {
 
     private filter: TaskFilter;
     private query = "";
-    private focus: "list" | "output" = "list";
     private outHeader: string[] = [];
     private outLines: string[] = [];
     private outScroll = 0;
@@ -404,7 +403,6 @@ export class TaskMonitor implements Component {
             { key: "x", label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
             { key: "c", label: "copy", enabled: !!selJob, run: () => this.actCopy() },
             { key: "d", label: "remove", enabled: !!selJob, run: () => this.actRemove() },
-            { key: "⏎", label: "output", enabled: !!selJob, run: () => this.actOutput() },
         ];
         let barLine = "  ";
         const ranges: typeof this.actionRanges = [];
@@ -424,7 +422,7 @@ export class TaskMonitor implements Component {
         inner.push(barLine + this.theme.fg("dim", "↑↓ · ⇥ filter · type to search"));
         inner.push("");
         const tabsLine = "  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
-            (this.focus === "list" ? "▏" : "") + "   ";
+            "▏   ";
         let searchLine = tabsLine;
         const franges: typeof this.filterRanges = [];
         for (const f of FILTERS) {
@@ -479,12 +477,6 @@ export class TaskMonitor implements Component {
     // --- input --------------------------------------------------------------
 
     handleInput(data: string): void {
-        if (this.focus === "output") {
-            this.handleOutputKey(data);
-            this.requestRender(); // repaint immediately, don't wait for the 1s poll
-            return;
-        }
-
         if (matchesKey(data, "escape")) return this.close();
         if (matchesKey(data, "tab")) {
             this.filter = FILTERS[(FILTERS.indexOf(this.filter) + 1) % FILTERS.length]!;
@@ -499,7 +491,6 @@ export class TaskMonitor implements Component {
         if (data === "x") return void this.actKill();
         if (data === "c") return void this.actCopy();
         if (data === "d") return void this.actRemove();
-        if (anyKey(data, "return", "enter")) return void this.actOutput();
         if (matchesKey(data, "backspace") || data === "\x7f") {
             this.query = this.query.slice(0, -1);
             this.rebuild();
@@ -509,9 +500,9 @@ export class TaskMonitor implements Component {
             this.list.handleInput(data);
             return;
         }
-        // Scroll the selected task's output without focusing the pane.
+        // Scroll the selected task's log without a focus mode of its own.
         if (anyKey(data, "home", "end", "pageUp", "pageDown")) {
-            this.handleOutputKey(data);
+            this.scrollOutputKey(data);
             this.requestRender();
             return;
         }
@@ -541,20 +532,13 @@ export class TaskMonitor implements Component {
         this.rebuild();
     }
 
-    private actOutput(): void {
-        this.focus = "output";
-        this.outFollow = true;
-        this.updateOutput();
-        this.requestRender();
-    }
-
     private actClose(): void {
         this.close();
     }
 
-    private handleOutputKey(data: string): void {
-        if (matchesKey(data, "escape")) return this.close();
-        if (anyKey(data, "return", "enter")) { this.focus = "list"; return; }
+    /** Scroll the log pane. Home/End/PageUp/PageDown call this directly — there
+     *  is no focus mode: page-level scrolling is reachable without one. */
+    private scrollOutputKey(data: string): void {
         if (anyKey(data, "up") || data === "k") { this.outScroll = Math.max(0, this.outScroll - 1); this.outFollow = false; return; }
         if (anyKey(data, "down") || data === "j") { this.outScroll = Math.min(this.maxScroll(), this.outScroll + 1); this.outFollow = false; return; }
         if (anyKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - LOG_ROWS); this.outFollow = false; return; }
