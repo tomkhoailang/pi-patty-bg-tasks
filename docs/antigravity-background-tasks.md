@@ -155,7 +155,8 @@ Derived from the above; this is the section to keep in sync with our implementat
 
 1. **Launch async, never block.** Crossing the hand-off budget promotes the job; the agent
    continues. No auto-attach — blocking would destroy the parallel-work property in S1's
-   "you can continue your session".
+   "you can continue your session". *(Ours is a fixed **15 s**, owned by the extension, not a tool
+   parameter — see `antigravity-task-implementation.md` §10.1a for why and how it maps onto the port.)*
 2. **The extension is the client.** It polls (a few seconds) exactly like S2's `sleep(5)`
    loop. The model never polls.
 3. **Events are edge-triggered, never periodic.** Output resumed · entered silence · needs a

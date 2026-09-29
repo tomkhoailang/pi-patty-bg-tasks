@@ -192,6 +192,7 @@ Consequence: shell commands, tool calls, MCP calls, subagents and timers all app
 - **Completion-notification body** — resolved by the capture (§3.5, §8.6).
 - **Approval-prompt UI copy** — the model-side string is captured (`WAITING` → "Step is WAITING for
   user approval"); the human-facing prompt is a CLI view, not in the string table.
+- Everything else that was open is resolved in **§9** (transport, routing, limits, daemon bookkeeping).
 - **`Receive()` transport** — structured input is verified; whether the shell side is a PTY,
   a pipe, or a persistent terminal process is not.
 - **Pool limits** — no `background.With*` options found ⇒ concurrency cap likely fixed/hardcoded.
@@ -278,12 +279,159 @@ result renderer (exit code, stdout, stderr, `file://` log URI), wrapped in the e
 Steps carry `state` (`ACTIVE`/`DONE`) and timing/usage — i.e. the harness-level view of the same
 task lifecycle.
 
-## 9. Remaining gaps after the capture
-- **`Receive()` transport** — input is verified end-to-end through the CLI, but whether the shell
-  side is a PTY, a pipe, or a persistent terminal process is still not observable from outside.
-- **`requires_input_approval` prompt** — the model-side string is decoded (`WAITING` → "Step is
-  WAITING for user approval"); the interactive approval UI text is not.
-- **`waiting_for_dependents` / `waiting_for_message`** — states exist; the routing internals are not
-  decoded.
-- **Pool limits / daemon persistence** — no option symbols and no task tables found; likely fixed
-  concurrency and CLI-layer resumption.
+## 9. The four open questions — resolved
+
+### 9.1 `Receive()` transport → **PTY, confirmed empirically**
+
+Symbol evidence (binary): a backgrounded command is not a raw child process but a **managed
+terminal**: `terminal.(*LocalTerminalManager)` (`Create · Get · List · Close ·
+CloseAllForConversation · CloseAllForProject · CloseAllForWorkspace · ShutdownAll · cleanupLoop ·
+AssignSplitGroup`), the live command object `terminal.DynamicTerminalShellCommand`
+(`Add(output) · Finish · GetShellPid · GetSnapshot · GetStatus · GetOutput · GetCwd · ToProto`), and the
+write path `command.(*goCommand).SendInput` (alongside `OutputDelta · OutputWaitCh · State ·
+Terminate`). `CortexStepRunCommand.GetRequestedTerminalId` / `GetTerminalId` means a step can ask for a
+specific terminal. Termios ioctls (`charmbracelet/x/termios`, `unix.IoctlGet/SetTermios`) imply a tty
+without a third-party pty library.
+
+Empirical proof (probe A, §8 procedure) — backgrounded
+`bash -c 'echo stdin-tty:$([ -t 0 ] && echo yes || echo no); echo waiting-for-input; cat'`, then
+`send_input "hello-from-agent"`, then `status`:
+```
+stdin-tty:yes
+waiting-for-input
+hello-from-agent
+```
+The log carries `\r\n` (ONLCR translation) and `status` still shows `RUNNING` — so input is written to
+a **terminal the task owns**, and output is accumulated for the model to read.
+
+Two details worth copying:
+- `manage_task status` ends with a liveness line: **`Last progress: 10s ago`**.
+- Killing the task ends its step as `error: {type: TOOL_ERROR, message: "context canceled"}` —
+  cancellation propagates as a context-cancel into the step, and the notice is recorded as its own
+  `step_type: "system_message"` step.
+
+**Implication for us:** our jobs spawn with `stdio: ["ignore", logFd, logFd]`, so there is *no channel*
+to write to. `send_input` requires the terminal-registry layer we don't have (we do use `script(1)` for
+output liveness, which is the same primitive but without a handle to write back into).
+
+### 9.2 Interactive approval copy → still open
+Model side is known (a `WAITING` step renders `Step is WAITING for user approval`), driven by
+`WithRequiresInputApproval`. The human-facing prompt is CLI view code, not in the string table.
+
+### 9.3 `waiting_for_message` / `waiting_for_dependents` → **a real inbox bus**
+```
+jetski/cortex/messages.(*Client): ID · Capabilities · Send · SendStep · Receive · Read · List
+        · ListUndelivered · MarkRead · HasUndelivered · NotifyCh · Delete
+          (*FileStore): LoadAll · IsRead · Delete · DeleteRecipient · Capabilities
+              protostore.FileStore[AgentMessage]: Save · Load
+```A **per-recipient mailbox** persisted in a file store, with an undelivered list and a notify channel
+that drives wakeups. `waiting_for_message` = blocked on that bus; `waiting_for_dependents` = the
+parent/child side of the pool. This is the mechanism behind the `messaging.tmpl` prompt ("you may
+receive messages from: agents, background tasks, user-queued messages … delivered automatically at the
+start of each invocation") and behind the `manage_inbox` tool.
+
+### 9.4 Pool limits and daemon persistence
+
+**Limits — unbounded.** No `background.With*` options and no `semaphore` / `maxConcurrent` symbols
+were found; `Pool.Go` looks unguarded (our registry caps at 16).
+
+**Daemon persistence — step indices in the CLI store:**
+`jetski/cli/store.(*Manager).ActiveAgentTaskStepIndicesByDaemon` — the CLI's SQLite store keeps, *per
+daemon*, the set of active **step indices**; auto-resume reads that map. There is no task table: a
+daemon is a reference to steps, not a supervised process.
+
+Empirical (probe B): a task started with `IsDaemon: true` shows `"isDaemon": true` in `manage_task list`:
+```json
+{ "taskId": "<conv>/task-2", "toolName": "run_command", "toolSummary": "Run daemon task",
+  "isDaemon": true, "stepIndex": 2, "logUri": "file:///…/task-2.log" }
+```
+but after the print-mode run exited, `pgrep` found **no leftover process**, and a `--continue` check
+resumed a *different* conversation id — so the process-lifetime half is **not** proven by the probe and
+the `cli/store` symbol remains the trustworthy evidence. (Their `terminating %d background task(s) and
+%d daemon task(s) on exit` string says both are terminated on exit.)
+
+### 9.5 What is still unknown, in total
+1. The human-facing **input-approval** prompt copy (§9.2).
+2. Whether a daemon's *process* is intentionally left running on a normal (non-timeout) print-mode exit
+   — the probe was inconclusive (§9.4).
+3. The dependency-graph bookkeeping behind `waiting_for_dependents` (which component owns the edges).
+
+## 10. Port ledger — what we have vs what this decode says we need
+| Antigravity piece | Ours today | Verdict |
+|---|---|---|
+| Task (log + `Notify`/`Receive` + daemon/suppress/approval flags) | job registry + notice policy + `outputConsumed` | **equivalent** for shell jobs; missing `receive`, `daemon`, `approval` |
+| Pool (`Go` / `AwaitIdle` / `AfterFunc`) | registry + watcher + `scheduler.ts` (timers) | equivalent shape; `AwaitIdle` has no pi analogue (pi ends turns) |
+| Terminal registry (`Create/Get/List/Close` + `SendInput` + snapshots) | `script(1)` PTY for output only; `stdio: ["ignore", …]` | **missing — blocks `send_input`** |
+| Message inbox (`Send/Receive/NotifyCh` + file store) | none (jobs only talk to the agent via notices) | **missing — blocks `waiting_for_message`** |
+| Step model (`StepStatus`, per-tool result templates) | tool results + `job-status` notices | partial; our notices are not step-scoped |
+| CLI step-index bookkeeping for daemons | runtime record + snapshot + orphan reaper | different mechanism, same goal |
+| Prompt contract (A/B rule, Reactive Wakeup) | tool descriptions/guidelines (`v1.6.46`) | **already ported** |
+
+## 10.1 Deliberate deviations — patty behaviour we KEEP in the 1:1 port
+
+The port is 1:1 on *architecture* (Task · Pool · terminal registry · step results · inbox), not on
+topology: pi is a TUI host with tools/widgets/messages, not an agent engine, so a few things are ours
+by design. Each entry says what we do, why, and what Antigravity does instead.
+
+### (a) The **15 s auto hand-off** — keep
+
+**Ours:** a foreground command still running after a **fixed 15 s** is *promoted* to a background task.
+The tool result stays facts-only (`Process backgrounded as job-X (auto-backgrounded after 15s)` +
+command/pid/log path) and the agent simply continues — the hand-off itself raises no notification.
+Budget: `DEFAULT_TIMEOUT_MS = 15_000`, overridable with `PI_PATTY_BG_TIMEOUT_MS`; the tool's `timeout`
+parameter bounds only how long the job may then *run*, never when the hand-off happens.
+
+**Why it's ours:** 15 s is pi's assistant blocking budget — the point at which holding the turn costs
+more than backgrounding. The extension, not the model, owns that clock, so the model never has to
+decide "should I background this?" mid-command, and a forgotten long command can't pin a turn.
+
+**Antigravity instead:** backgrounding is **explicit** — the model passes `Background: true` on the
+command tool (plus `IsDaemon`), and the harness has no equivalent auto-promotion clock. Their
+print-mode wait is bounded by `--print-timeout` (≤30 min), which is a *turn* budget, not a hand-off
+threshold.
+
+**Port consequence:** nothing in the port may remove this. When the Task/Pool layer lands, the
+promotion becomes "`Pool.Go` a task from inside the running tool call at 15 s" — same behaviour, new
+plumbing — and the tool result stays the facts-only shape §3.1 captured.
+
+### (b) Ctrl+B cooperative steering — keep
+Claude Code parity: typing while a backgroundable command runs aborts the turn *and* moves the command
+to the background without killing it. Antigravity has no such gesture (backgrounding is a tool param).
+
+### (c) The strip and the Task Monitor modal — keep
+Our TUI surfaces (running/stalled/failed rows, `⌗ monitor`, capital `K`/`C`/`D`, fuzzy search, `←` at
+caret-start, the two-pane modal with a pinned header and live log tail) exist because pi exposes
+widgets, mouse events and overlays. Antigravity's `/tasks` panel is CLI-internal and unreusable.
+
+### (d) Auto-PTY + unattended env — keep
+We run TTY-gated tools (npm/vite/jest) under `script(1)` with pagers/prompts disabled. Their shell is
+engine-native, so this is a pi-layer concern. (When the terminal registry lands, this becomes the
+registry's pty creation — same need, real handle.)
+
+### (e) The sleep guard — keep
+We refuse a bare `sleep N` wait and steer to `jobs attach`/`monitor`. Antigravity only *advises*
+against shell sleeps as timers (`schedule` description); we enforce it.
+
+### (f) Orphan reaper + crash-safe runtime record — keep
+On an unclean exit (SIGKILL/power loss/dead terminal) we reap the leftover process groups on the next
+start, guarded by a `/proc` cmdline check. Their daemon story is step-index bookkeeping in the CLI
+store, not process reaping — ours is stronger for the crash case.
+
+### (g) `PI_PATTY_BG_NOTIFY` policy — keep
+One dial (`off|error|result|concise|all`) for how much news reaches the agent; they expose only the
+per-task `WithSuppressCompletionNotification` flag.
+
+### (h) No daemon tier — keep (documented limit)
+`WithIsDaemon` is **not** ported: pi kills jobs on quit and our reaper kills leftovers from a dead pi,
+so a "daemon" here would be a record without a process. A service must live outside pi
+(`systemd`/`tmux`). This is stated in the README's Limits section and must stay stated.
+
+### (i) `monitor` tool and `agent_bg` — keep
+Per-event stream watching and "clone yourself as a `pi -p` child" are pi-native stand-ins for their
+inbox/subagent machinery. Until the inbox lands (§9.3), they remain the way long work reports back.
+
+## 10.2 Where the 1:1 port starts (tomorrow)
+Per the staged sequence in §6 of the comparison: `core/task.ts` + `core/pool.ts` first (Task with the
+8-state enum and the four flags; `Go`/`AwaitIdle`), then the terminal registry + `send_input`, then
+step-scoped results, then the inbox, then the flag semantics — deleting patty's special cases as each
+stage lands and **keeping §10.1 intact throughout**.
