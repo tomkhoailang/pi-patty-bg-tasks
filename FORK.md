@@ -684,6 +684,15 @@ SIGTERMs (same pid-reuse guard) every record whose `ownerPid` is not this
 process, then prunes dead records. Records owned by *this* pid are left alone so
 a `/reload` keeps its jobs.
 
+## Change 12 — auto-background budget is fixed at 15 s
+
+`timeoutMs` used to drive BOTH the auto-background timer and the backgrounded
+job's decision deadline, so a generous `timeout` silently delayed the hand-off —
+a `timeout: 240` call kept a 27 s command in the foreground for the full 240 s.
+The timer (and its result message) now use `DEFAULT_TIMEOUT_MS` (15 s,
+`PI_PATTY_BG_TIMEOUT_MS` to override). The tool's `timeout` bounds only how long
+the job may RUN once backgrounded.
+
 ## Environment override
 
 ```sh
@@ -696,7 +705,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.32-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.33-pi15
 ```
 
 ## Rebase onto a newer upstream release

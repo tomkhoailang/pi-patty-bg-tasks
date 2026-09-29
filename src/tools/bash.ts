@@ -219,7 +219,11 @@ async function runForeground(args: {
         }
     };
 
-    // Timeout timer.
+    // Auto-background timer. This is a FIXED budget (DEFAULT_TIMEOUT_MS = 15s),
+    // deliberately NOT the tool's `timeout` param: `timeout` bounds how long the
+    // job may then RUN in the background (the decision deadline), it must never
+    // delay handing the command off to the background. Passing `timeout: 240`
+    // used to keep a 27s command in the foreground for the full 240s.
     const timeoutTimer = setTimeout(() => {
         if (reg.nonInteractive) return;
         if (!reg.foreground.has(toolCallId)) return;
@@ -228,7 +232,7 @@ async function runForeground(args: {
             return;
         }
         requestPause("timeout");
-    }, timeoutMs);
+    }, DEFAULT_TIMEOUT_MS);
     (timeoutTimer as NodeJS.Timeout).unref();
 
     let progressPoller: { stop: () => void } | undefined;
@@ -281,7 +285,7 @@ async function runForeground(args: {
             promoteToBackground(race.reason);
             const reason =
                 race.reason === "timeout"
-                    ? ` (auto-backgrounded after ${Math.round(timeoutMs / 1000)}s; still running — check with jobs output if needed)`
+                    ? ` (auto-backgrounded after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)}s; still running — check with jobs output if needed)`
                     : "";
             return {
                 content: [
