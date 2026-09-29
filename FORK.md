@@ -965,6 +965,15 @@ allowed to wake the agent, which is the whole point of a schedule).
 Not copied: `IsDaemon` (no daemon tier — see the README limits) and per-fire raw
 output in the notice.
 
+## Change 27 — README tells the truth again
+
+Docs-only. The README still advertised a 120 s auto-background threshold (this fork
+has used a fixed 15 s since Change 12), described the removed "warned when the output
+looks like a prompt" behaviour, and said nothing about what the extension cannot do.
+It now documents the real flow, the `schedule` tool, and a **Limits** section: no
+daemon tier, stdin is `/dev/null`, silence is not an event, the pull verbs are the
+only sanctioned read path, and timers are not a task queue.
+
 ## Environment override
 
 ```sh

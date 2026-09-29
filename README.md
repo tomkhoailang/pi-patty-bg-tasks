@@ -53,7 +53,7 @@ Needs Pi v0.37+. That's the only requirement — there are **no external depende
 ## Quick Start
 
 ```
-# Agent runs a long command — auto-backgrounds after 120s
+# Agent runs a long command — auto-backgrounds after 15s
 bash({ command: "npm run build" })
 
 # Skip the wait — start it in the background up front
@@ -70,6 +70,10 @@ jobs({ action: "search", pattern: "error|warning" })
 
 # Hand off a whole task to a background agent
 agent_bg({ prompt: "Refactor the auth module" })
+
+# Come back to something later (one-shot, or `every` for a cron-style repeat)
+schedule({ in: "10m", prompt: "re-check the deploy rollout" })
+schedule({ every: "*/30 * * * *", reason: "dependency audit", prompt: "audit npm deps" })
 ```
 
 Hit **Ctrl+B** whenever a command is running to background it on the spot — a dim `(ctrl+b to run in background)` hint appears under your input once the command has been going a couple of seconds. The agent gets notified and is back to work before you've let go of the keys.
@@ -113,12 +117,25 @@ Mission control for everything running in the background: list, read output, kil
 
 ### job_decide
 
-The agent's answer to an auto-backgrounded command. This prompt lands the moment the 120-second timer fires.
+The agent's answer to a **decision event** — a job that looks blocked on input, or one that has been silent past the threshold.
 
 | Parameter | Description |
 |-----------|-------------|
-| `jobId` | The backgrounded job's ID |
-| `decision` | `keep` (let it run), `kill` (terminate), or `check` (inspect output first) |
+| `jobId` | The job's ID |
+| `decision` | `keep` (let it run **and stop asking about this silence episode**), `kill` (terminate), or `check` (inspect output first) |
+
+### schedule
+
+A one-shot timer or a recurring job that notifies the agent later. It returns immediately as a normal background job, so `jobs list|kill` manages it and it survives a reload.
+
+| Parameter | Description |
+|-----------|-------------|
+| `in` / `at` | One-shot: a delay (`10m`, `90s`, `2h`, `1d`) or an ISO time |
+| `every` | Recurring: a duration (`5m`) or a 5-field cron expression (`*/30 * * * *`) |
+| `prompt` | Text to run on fire (wakes the agent); omit for a plain notice |
+| `reason` | Label shown in `jobs list` |
+| `maxFires` | Stop after this many fires |
+| `cancelOnActivity` | Cancel when any other job completes (heartbeat pattern) |
 
 ### agent_bg
 
@@ -185,14 +202,20 @@ No magic, just a tidy state machine:
 ```
 Command starts (direct Node.js child_process.spawn)
   → Done in <2s?           Return the result immediately
-  → Still running at 120s? Auto-background → agent gets a job_decide prompt
-  → You press Ctrl+B?       Background immediately → agent continues
+  → Still running at 15s?  Auto-background, agent is told and keeps working
+  → You press Ctrl+B?      Background immediately → agent continues
 
 Background job running
   → Output captured to /tmp/pi-bg/<id>.log via file descriptor
-  → Stall detection: if the output looks like an interactive prompt, the agent is warned
+  → Silence is NOT an event: no notice is sent just because output stopped
+  → Two edges do speak, once per silence episode: a prompt-like tail (blocked on
+    input) and silence past the long threshold → one `job_decide` event
   → Oversize detection: if the output blows past the limit, the job is killed
-  → On completion: agent gets a notification with status + output path
+  → On completion: the agent is notified (injected mid-turn, or a wake when idle)
+
+Schedule (a job of kind "timer")
+  → Fires later, or on a cron-style repeat, bounded by maxFires
+  → A restored timer whose time passed while pi was down fires ONCE, marked late
 ```
 
 Background jobs run as detached Node.js child processes with their stdout/stderr wired
@@ -201,6 +224,30 @@ external process manager, nothing standing between your command and its log. Up 
 **16 background jobs** run at once; ask for a 17th and it's politely rejected until a
 slot frees up. Stale logs older than 24h get swept on session start, so `/tmp` never
 turns into a junk drawer.
+
+## Limits
+
+Things this extension deliberately does **not** do, stated because they are
+capability boundaries rather than bugs:
+
+- **No daemon tier.** On `/quit` every running job is terminated, and jobs left
+  behind by a pi that died (crash, SIGKILL, dead terminal) are reaped on the next
+  start. A long-lived service must live outside pi (`systemd`, `tmux`, `nohup`) —
+  a job started here does not outlive the session.
+- **stdin is `/dev/null`.** A background job gets EOF rather than your keyboard,
+  so it can never steal keystrokes from the TUI — and a command that wants input
+  must be given it up-front (`--yes`, `yes |`, a here-doc). A job blocked on input
+  can only be killed; the "looks blocked on input" decision event exists for that.
+- **No progress pings.** Silence is not an event: a dev server that prints once and
+  then serves traffic costs zero messages. Only completions and the two silence
+  edges speak. `PI_PATTY_BG_NOTIFY=off|error|result|concise|all` (default
+  `concise`) turns the notice channel down further.
+- **`jobs output` / `jobs attach` are the only sanctioned ways to read a job.** The
+  log files under `/tmp/pi-bg` are an implementation detail; scraping them bypasses
+  the notification model (and is why the hand-off result no longer advertises them).
+- **Timers are not a task queue.** One `schedule` call is one timer, bounded by
+  `maxFires`; there is no cron daemon, no job dependency graph, and missed windows
+  collapse into a single late fire rather than replaying.
 
 ## Cooperative Steering (Claude Code parity)
 
@@ -267,7 +314,7 @@ The big one. The background engine was rewritten from the ground up to match Cla
 
 **Breaking changes**
 - **tmux is gone.** Background jobs now run as direct Node.js `child_process.spawn` processes with file-descriptor output capture. tmux is no longer used or required — nothing left to install.
-- **Default auto-background timeout is now 120s** (was 15s), matching Claude Code. Pass an explicit `timeout` to override.
+- **Default auto-background timeout is now 120s** (was 15s), matching Claude Code. Pass an explicit `timeout` to override. *(Upstream history: this fork sets the hand-off back to a fixed 15s — see the note at the top of this README and Change 12 in FORK.md — and `timeout` bounds how long the job may run once backgrounded.)*
 - Background logs moved from `/tmp/pi-bg-<id>.log` to a dedicated `/tmp/pi-bg/<id>.log` directory.
 
 **Highlights**
