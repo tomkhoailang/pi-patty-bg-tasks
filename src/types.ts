@@ -152,6 +152,9 @@ export const DELIVER_FOLLOWUP = { deliverAs: "followUp", triggerTurn: false } as
 /** Minimal TUI surface the strip needs from the widget factory. */
 export interface StripTui {
     requestRender(): void;
+    /** pi-tui's TUI. Optional so a test can pass a bare `{ requestRender }`; the
+     *  real object always has it. Used to read the prompt's caret. */
+    getFocusedComponent?(): unknown;
 }
 
 /**

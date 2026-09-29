@@ -811,6 +811,30 @@ pure search text; the capitals are the actions.**
 - Digits are still search text, so `1-5` no longer switch filters — click the
   tabs or press `⇥`.
 
+## Change 20 — `←` at the start of the prompt opens the Task Monitor
+
+A `←` pressed when the caret already sits at the very start of the prompt does
+nothing in pi (a no-op move), so it is free to bind: it now opens the Task
+Monitor.
+
+The caret comes from **pi's own editor**, not from a replacement component. The
+extension UI context has no cursor accessor, but:
+
+- `TUI.getFocusedComponent()` is public, and pi focuses the prompt editor
+  directly (`new CustomEditor(...)` + `ui.setFocus(editor)`),
+- `Editor.getCursor()` is public and returns `{ line, col }`.
+
+So `src/editor-caret.ts` reads `{ line: 0, col: 0 }` through those two and the
+binding lives in the existing `onTerminalInput` listener (which already exists
+for the strip's expand keys). No `CustomEditor` subclass, no private fields, no
+editor takeover.
+
+Properties: the key is *consumed* when it fires, so the caret does not move and
+the draft is untouched; `isKeyRepeat` means a HELD arrow opens it once at most;
+and when a modal/dialog/overlay holds focus there is no `getCursor()`, so `←`
+passes through instead of being hijacked. The `TUI` reference comes from the
+strip's widget factory, which already received and stored it.
+
 ## Environment override
 
 ```sh
@@ -823,7 +847,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.40-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.41-pi15
 ```
 
 ## Rebase onto a newer upstream release

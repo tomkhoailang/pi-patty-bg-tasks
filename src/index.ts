@@ -14,6 +14,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { isKeyRepeat, matchesKey } from "@earendil-works/pi-tui";
 import { BackgroundRegistry } from "./state.ts";
 import {
     cleanupStaleRuntimeArtifacts,
@@ -23,6 +24,7 @@ import {
 } from "./lifecycle.ts";
 import { forget as forgetJob, renderSidebar, stopSidebarTicker } from "./registry.ts";
 import { reapRuntimeOrphans } from "./runtime.ts";
+import { caretAtPromptStart } from "./editor-caret.ts";
 import { cancelPendingNotices, noteAgentEnd, noteAgentStart } from "./notify.ts";
 import {
     EVENT,
@@ -31,6 +33,7 @@ import {
     type UiContext,
 } from "./types.ts";
 import { registerBashTool } from "./tools/bash.ts";
+import { openTaskMonitor } from "./task-monitor.ts";
 import { registerBashBgTool } from "./tools/bash-bg.ts";
 import { registerJobsTool } from "./tools/jobs.ts";
 import { registerJobDecideTool } from "./tools/job-decide.ts";
@@ -144,7 +147,21 @@ export default function (pi: ExtensionAPI): void {
         // never stall waiting for something to re-focus it.
         (ctx as unknown as UiContext).ui.onTerminalInput?.((data) => {
             try {
-                return reg.stripKeyHandler?.(data) ? { consume: true } : undefined;
+                if (reg.stripKeyHandler?.(data)) return { consume: true };
+
+                // `←` at the very start of the prompt opens the Task Monitor. The
+                // caret is read from pi's own editor (see editor-caret.ts): at
+                // (line 0, col 0) `←` is a no-op there, so consuming it costs
+                // nothing. `isKeyRepeat` keeps a HELD arrow from opening it twice,
+                // and a modal holding focus has no `getCursor`, so the key passes
+                // through to whatever is actually focused.
+                if (matchesKey(data, "left") && !isKeyRepeat(data)) {
+                    if (caretAtPromptStart(reg.stripTui)) {
+                        void openTaskMonitor(reg, ctx as unknown as UiContext, "all");
+                        return { consume: true };
+                    }
+                }
+                return undefined;
             } catch {
                 return undefined;
             }
