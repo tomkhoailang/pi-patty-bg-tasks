@@ -125,6 +125,10 @@ export class TaskMonitor implements Component {
     /** Clickable filter tabs (inner-x ranges). */
     private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
 
+    /** Set by kill/remove: the NEXT automatic rebuild keeps the cursor's
+     *  POSITION instead of following the row that moved. One-shot, so a job that
+     *  finishes later can still keep the cursor on itself. */
+    private pinIndexOnce: number | undefined;
     private ticker: ReturnType<typeof setInterval> | undefined;
     private lastSig = "";
     private lastSelectedId: string | undefined;
@@ -266,6 +270,23 @@ export class TaskMonitor implements Component {
         this.requestRender();
     }
 
+    /** Index of the selected row in the current list. `SelectList` keeps
+     *  `selectedIndex` private, so derive it the way rebuild() does. */
+    private selectedIndexNow(): number {
+        const id = this.list.getSelectedItem()?.value;
+        const idx = this.jobs().findIndex((j) => j.id === id);
+        return idx < 0 ? 0 : idx;
+    }
+
+    /** Rebuild keeping the cursor at `index`: the row acted on may vanish or
+     *  re-sort, and the cursor must not travel with it. */
+    private rebuildAt(index: number): void {
+        this.list = this.buildList();
+        this.list.setSelectedIndex(index); // SelectList clamps to the list bounds
+        this.updateOutput(true);
+        this.requestRender();
+    }
+
     private remove(job: Job): void {
         this.reg.jobs.delete(job.id);
         const recent = this.reg.recentTerminal;
@@ -310,7 +331,15 @@ export class TaskMonitor implements Component {
         const prev = this.list.getSelectedItem()?.value;
         const idx = this.jobs().findIndex((j) => j.id === prev);
         this.list = this.buildList();
-        if (idx > 0) this.list.setSelectedIndex(idx);
+        if (this.pinIndexOnce !== undefined) {
+            // A kill/remove just happened: keep the POSITION, not the row. Without
+            // this the poll drags the cursor back onto the row it moved to (kill)
+            // or onto the top of the list (remove).
+            this.list.setSelectedIndex(this.pinIndexOnce);
+        } else if (idx > 0) {
+            this.list.setSelectedIndex(idx); // stay on the job you were watching
+        }
+        this.pinIndexOnce = undefined;
     }
 
     /** Refresh the pinned header + log tail. `resetScroll` follows the end. */
@@ -516,12 +545,16 @@ export class TaskMonitor implements Component {
     }
 
     private actKill(): void {
+        const at = this.selectedIndexNow();
         const j = this.selected();
         if (j && j.status === "running") {
             terminateJobSilently(this.reg, j);
             renderSidebar(this.reg, this.ctx);
         }
-        this.rebuild();
+        // Killing re-sorts the row to the bottom: keep the cursor where it was, and
+        // pin the position for the poll rebuild that follows the status change.
+        this.pinIndexOnce = at;
+        this.rebuildAt(at);
     }
 
     private actCopy(): void {
@@ -530,9 +563,13 @@ export class TaskMonitor implements Component {
     }
 
     private actRemove(): void {
+        const at = this.selectedIndexNow();
         const j = this.selected();
         if (j) { this.remove(j); renderSidebar(this.reg, this.ctx); }
-        this.rebuild();
+        // The row is gone: keep the cursor at the same POSITION rather than
+        // letting the rebuilt list snap to the top.
+        this.pinIndexOnce = at;
+        this.rebuildAt(at);
     }
 
     private actClose(): void {

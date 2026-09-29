@@ -109,6 +109,46 @@ describe("TaskMonitor", () => {
         assert.ok(!text.includes("docker build"), "D removed the selected row");
     });
 
+    test("kill/remove leaves the cursor where it was", () => {
+        const mk = (n: string) => job({ id: `job-1-${n}`, name: `task-${n}`, command: `task-${n}` });
+        const reg = makeReg([mk("1"), mk("2"), mk("3")]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        // The left cell leads each line, so the FIRST task-N in a row is the list
+        // entry (the right pane's header repeats the selected job's name).
+        const name = (line: string) => line.match(/task-\d+/)![0];
+        const selectedName = () => {
+            const row = m.render(100).map(stripAnsi).find((l) => l.includes("→"));
+            return row ? name(row) : undefined;
+        };
+        try {
+            m.render(100);
+            const before = m
+                .render(100)
+                .map(stripAnsi)
+                // `●` alone also matches the title's "● 3 running" counter.
+                .filter((l) => l.includes("●") && /task-\d+/.test(l))
+                .map(name);
+            assert.equal(before.length, 3, `three rows: ${before}`);
+            // Click the SECOND body row (y = 7: border, title, actions, blank,
+            // search, blank, row 0). A click, not ↓ — the arrow goes through the
+            // global keybindings manager, which is shared process state.
+            m.handleMouse({
+                type: "click", button: "left", x: 3, y: 7,
+                screenX: 3, screenY: 7, width: 100, height: 30, shift: false, alt: false, ctrl: false,
+            });
+            assert.equal(selectedName(), before[1], "click selected row 1");
+
+            m.handleInput("D"); // remove it
+            // The cursor keeps its POSITION: the row below slides up under it,
+            // rather than the selection following the removed row or snapping to 0.
+            assert.equal(selectedName(), before[2], "cursor stayed at the same position");
+            assert.ok(m.render(100).map(stripAnsi).join("\n").length > 0);
+        } finally {
+            m.dispose();
+        }
+    });
+
     test("every printable key types into the search", () => {
         const reg = makeReg([
             job({ id: "job-1-1", name: "remove-me", command: "remove-me" }),

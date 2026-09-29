@@ -835,6 +835,22 @@ and when a modal/dialog/overlay holds focus there is no `getCursor()`, so `←`
 passes through instead of being hijacked. The `TUI` reference comes from the
 strip's widget factory, which already received and stored it.
 
+## Change 21 — the modal cursor keeps its POSITION across kill/remove
+
+The list followed the selected **job id** on every rebuild, so acting on a row
+moved the cursor with it: killing re-sorts the row to the bottom (running-first
+order) and the cursor travelled along; removing dropped the id, so the rebuilt
+`SelectList` fell back to index 0 and the cursor jumped to the top. The 1 s poll
+then re-followed the moved row, undoing any one-off fix.
+
+- `rebuildAt(index)` rebuilds and restores the cursor's POSITION (`SelectList`
+  clamps it to the new bounds).
+- `actKill`/`actRemove` call it, and set `pinIndexOnce` so the poll rebuild that
+  follows the status change keeps the same position instead of dragging the
+  cursor back onto the row that moved.
+- Everything else is unchanged: filtering/search/typing still follow the selected
+  *job*, which is right when the list is genuinely re-defined.
+
 ## Environment override
 
 ```sh
@@ -847,7 +863,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.41-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.42-pi15
 ```
 
 ## Rebase onto a newer upstream release

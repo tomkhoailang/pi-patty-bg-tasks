@@ -103,17 +103,23 @@ describe("reaper", () => {
         if (process.platform !== "linux") return t.skip("Linux-only reap");
         rmSync(RUNTIME_FILE, { force: true });
         const child = spawnGroup();
-        try {
+        // jobs.json is SHARED with the pi process the tests run under (it records
+        // its own background jobs), so a record can be clobbered between writing
+        // it and reaping. Re-assert the record each attempt rather than betting on
+        // one write surviving.
+        const markOrphan = () => {
             recordRuntimeJob(job({ id: "job-orphan", pid: child.pid }));
-            // Re-label it as another pi's — owner !== us is what marks an orphan.
             const file = JSON.parse(readFileSync(RUNTIME_FILE, "utf8"));
-            file.jobs["job-orphan"].ownerPid = process.pid + 1;
+            file.jobs["job-orphan"].ownerPid = process.pid + 1; // foreign -> orphan
             writeFileSync(RUNTIME_FILE, JSON.stringify(file));
-
-            reapRuntimeOrphans();
-            const deadline = Date.now() + 2000;
-            while (alive(child.pid) && Date.now() < deadline) await delay(20);
-
+        };
+        try {
+            const deadline = Date.now() + 5000;
+            while (alive(child.pid) && Date.now() < deadline) {
+                markOrphan();
+                reapRuntimeOrphans();
+                if (alive(child.pid)) await delay(50);
+            }
             assert.equal(alive(child.pid), false, "orphan group was SIGTERMed");
             assert.equal(entries()["job-orphan"], undefined, "record pruned");
         } finally {
