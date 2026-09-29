@@ -14,8 +14,10 @@ import type {
     ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import type { BackgroundRegistry } from "./state.ts";
+import type { UiContext } from "./types.ts";
 import { takeControl, type ControlContext } from "./lifecycle.ts";
 import { openBgListPanel } from "./ui.ts";
+import { openTaskMonitor } from "./task-monitor.ts";
 
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const packageRoot = dirname(packageJsonPath);
@@ -36,6 +38,13 @@ export function registerCommands(
         description: "Open the interactive background task manager",
         handler: async (_args, ctx: ExtensionCommandContext) => {
             await openBgListPanel(reg, ctx);
+        },
+    });
+
+    pi.registerCommand("monitor-task", {
+        description: "Open the Task Monitor (task list + live output)",
+        handler: async (_args, ctx: ExtensionCommandContext) => {
+            await openTaskMonitor(reg, ctx as unknown as UiContext, "all");
         },
     });
 

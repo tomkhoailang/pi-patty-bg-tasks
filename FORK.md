@@ -625,7 +625,8 @@ replacing the empty `openStripPanel` placeholder:
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
   `esc`/`q` close. Mouse works on both panes.
 - Opened via `ctx.ui.custom(..., { overlay: true })`; non-TUI falls back to the
-  `select()`-based `openBgListPanel`.
+  `select()`-based `openBgListPanel`. Also reachable manually with the
+  **`/monitor-task`** slash command.
 - The strip no longer lists **killed** jobs — they live in the monitor's `killed`
   filter.
 
@@ -641,7 +642,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.16-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.17-pi15
 ```
 
 ## Rebase onto a newer upstream release
