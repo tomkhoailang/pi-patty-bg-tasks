@@ -550,6 +550,41 @@ you had expanded dropped out of the visible set the moment it finished:
 The expanded row is now **pinned into the visible set regardless of state**, so
 the detail stays while you read it and the row simply goes quiet (dimmed).
 
+## Change 7 — live output for background jobs (liveness guard)
+
+Background stdout/stderr go straight to the job's log fd, and that fd belongs to
+the **last pipeline stage**. Two ways the expanded log stayed empty while the job
+was clearly working:
+
+1. A buffering sink in the pipeline — `cargo check | tail -80`. `tail`/`head`/
+   `sort`/`uniq`/`jq` hold everything until EOF, so the log is 0 bytes for the
+   whole run and only fills at the end.
+2. A tool that gates progress on `isatty()` — npm, pnpm, vite, webpack, jest,
+   cargo-nextest, etc. — prints nothing when stdout is a file.
+
+`src/background-command.ts` normalizes the command at the **background-at-spawn**
+sites only (`bash-bg.ts`, and `bash.ts` when `run_in_background` is set), so an
+ordinary fast foreground `git log | head` keeps its exact semantics:
+
+- **Strip** a trailing finite `| tail …` (redundant — pi already tails the log).
+- **Reject** `| head`/`| sort`/`| uniq`/`| jq` with guidance: they change which
+  lines exist, and `head` also SIGPIPEs the producer.
+- Leave streamers alone: `tail -f`/`tail -F`, `grep --line-buffered`.
+- **PTY for TTY-gated tools** (auto for a known set, or `pty: true`): spawned via
+  `script -qefc <cmd> /dev/null` with an *unattended* env (`PAGER=cat`,
+  `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `DEBIAN_FRONTEND=noninteractive`) so a
+  pager/prompt can never block the job. Linux-only; falls back to file-fd
+  elsewhere.
+- Always sets `PYTHONUNBUFFERED=1`.
+
+Known residuals (documented, not fixed): a tool that buffers internally and
+ignores libc (some Node CLIs) stays quiet off a PTY unless the command opts in;
+a long *foreground* `cmd | tail` that later auto-backgrounds was already piped at
+spawn and is not rewritten.
+
+`FORK.md` note: the `pty` flag is per-call (`bash_bg`/`run_in_background`); auto-
+PTY covers the common dev/build/test runners.
+
 ## Environment override
 
 ```sh
@@ -562,7 +597,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.10-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.11-pi15
 ```
 
 ## Rebase onto a newer upstream release

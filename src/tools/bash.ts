@@ -29,6 +29,9 @@ import {
 import { spawnWithFileOutput, killProcessTree } from "../spawn.ts";
 import { streamLog } from "../output.ts";
 import {
+    prepareBackgroundCommand, prefersPty, ptyArgv, UNATTENDED_ENV,
+} from "../background-command.ts";
+import {
     add,
     createRunningJob,
     markStarted,
@@ -83,6 +86,7 @@ export function registerBashTool(
                 timeout?: number;
                 run_in_background?: boolean;
                 description?: string;
+                pty?: boolean;
             };
             const bashCtx = ctx as BashCtx;
 
@@ -106,6 +110,7 @@ export function registerBashTool(
                     reg,
                     pi,
                     ctx: bashCtx,
+                    pty: p.pty,
                 });
             }
 
@@ -312,15 +317,22 @@ function spawnBackground(args: {
     reg: BackgroundRegistry;
     pi: ExtensionAPI;
     ctx: UiContext;
+    pty?: boolean;
 }): AgentToolResult<BashToolDetails | undefined> {
     const id = nextJobId(args.reg);
     const logPath = logPathFor(id);
 
-    const spawned = spawnWithFileOutput({
-        command: args.command,
-        cwd: args.cwd,
-        logPath,
-    });
+    // Liveness: strip/reject buffering sinks, then pick file-fd vs PTY so the log
+    // shows output while running (see background-command.ts).
+    const prepared = prepareBackgroundCommand(args.command);
+    const ptyArgs = (args.pty ?? prefersPty(prepared.command))
+        ? ptyArgv(prepared.command)
+        : null;
+    const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? UNATTENDED_ENV : {}) };
+
+    const spawned = ptyArgs
+        ? spawnWithFileOutput({ file: "script", fileArgs: ptyArgs, cwd: args.cwd, logPath, env })
+        : spawnWithFileOutput({ command: prepared.command, cwd: args.cwd, logPath, env });
 
     const job = createRunningJob({
         id,
@@ -338,7 +350,9 @@ function spawnBackground(args: {
             textBlock(
                 `Command running in background with ID: ${id}.${
                     args.name ? ` Name: ${args.name}.` : ""
-                } Output is being written to: ${logPath}`
+                } Output is being written to: ${logPath}` +
+                `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}` +
+                `${ptyArgs ? "\n(Running under a PTY for live output.)" : "\nTip: if the log stays empty while running, re-run with pty: true."}`
             ),
         ],
         details: undefined,

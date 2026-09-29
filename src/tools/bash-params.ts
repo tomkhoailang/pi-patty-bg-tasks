@@ -19,4 +19,11 @@ export const bashParamSchema = Type.Object({
     description: Type.Optional(
         Type.String({ description: "Short description of what this command does" })
     ),
+    pty: Type.Optional(
+        Type.Boolean({
+            description:
+                "Only with run_in_background: run under a PTY so TTY-gated tools " +
+                "(npm/vite/webpack/jest/...) show live progress. Auto-enabled for those.",
+        })
+    ),
 });

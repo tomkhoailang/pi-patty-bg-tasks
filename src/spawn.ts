@@ -28,6 +28,8 @@ export function spawnWithFileOutput(args: {
      *  the monitor tool so stdout is a clean event stream and stderr is captured
      *  separately (readable, but never emitted as an event). */
     errPath?: string;
+    /** Extra environment for the child (merged over the inherited env). */
+    env?: Record<string, string>;
     signal?: AbortSignal;
 }): SpawnResult {
     mkdirSync(dirname(args.logPath), { recursive: true });
@@ -50,7 +52,7 @@ export function spawnWithFileOutput(args: {
             stdio: ["ignore", outFd, errFd],
             cwd: args.cwd,
             detached: true,
-            env: { ...process.env },
+            env: { ...process.env, ...args.env },
         });
     } finally {
         closeSync(outFd);

@@ -12,6 +12,9 @@ import { Type } from "@earendil-works/pi-ai";
 import type { BackgroundRegistry } from "../state.ts";
 import { type UiContext } from "../types.ts";
 import { spawnWithFileOutput } from "../spawn.ts";
+import {
+    prepareBackgroundCommand, prefersPty, ptyArgv, UNATTENDED_ENV,
+} from "../background-command.ts";
 import { add, createRunningJob, nextJobId, logPathFor, renderSidebar } from "../registry.ts";
 import {
     assertJobSlot, detectBlockedSleep, isAutoBackgroundAllowed, isBlankCommand,
@@ -41,10 +44,17 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             name: Type.Optional(Type.String({ description: "Label shown in jobs list" })),
             timeout: Type.Optional(Type.Number({ description: "Timeout in seconds" })),
             notify: Type.Optional(Type.Boolean({ description: "Notify on completion (default: true)" })),
+            pty: Type.Optional(
+                Type.Boolean({
+                    description:
+                        "Run under a PTY so TTY-gated tools (npm/vite/webpack/jest/...) show live progress. " +
+                        "Default: auto for such commands, file-fd otherwise.",
+                })
+            ),
         }),
 
         async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-            const p = params as { command: string; name?: string; timeout?: number; notify?: boolean };
+            const p = params as { command: string; name?: string; timeout?: number; notify?: boolean; pty?: boolean };
             const ctx2 = ctx as BashBgCtx;
             if (isBlankCommand(p.command)) throw new Error("Command is empty.");
             // A backgrounded `sleep N` wait just lingers for the full duration —
@@ -56,11 +66,19 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             requireExistingCwd(ctx2.cwd);
             assertJobSlot(reg);
 
+            // Liveness: strip/reject buffering sinks, then pick file-fd vs PTY so the
+            // expanded log shows output while the job runs (see background-command.ts).
+            const prepared = prepareBackgroundCommand(p.command);
+            const ptyArgs = (p.pty ?? prefersPty(prepared.command))
+                ? ptyArgv(prepared.command)
+                : null;
+            const env = { PYTHONUNBUFFERED: "1", ...(ptyArgs ? UNATTENDED_ENV : {}) };
+
             const id = nextJobId(reg);
             const logPath = logPathFor(id);
-            const spawned = spawnWithFileOutput({
-                command: p.command, cwd: ctx2.cwd, logPath,
-            });
+            const spawned = ptyArgs
+                ? spawnWithFileOutput({ file: "script", fileArgs: ptyArgs, cwd: ctx2.cwd, logPath, env })
+                : spawnWithFileOutput({ command: prepared.command, cwd: ctx2.cwd, logPath, env });
 
             const job = createRunningJob({
                 id, name: p.name, command: p.command, pid: spawned.pid,
@@ -90,7 +108,9 @@ export function registerBashBgTool(pi: ExtensionAPI, reg: BackgroundRegistry): v
             return {
                 content: [textBlock(
                     `Command running in background with ID: ${id}.` +
-                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}`
+                    `${p.name ? ` Name: ${p.name}.` : ""} Output is being written to: ${logPath}` +
+                    `${prepared.stripped ? `\n(Removed \`| ${prepared.stripped}\` — pi tails the log itself.)` : ""}` +
+                    `${ptyArgs ? "\n(Running under a PTY for live output.)" : "\nTip: if the log stays empty while running, re-run with pty: true."}`
                 )],
                 details: undefined,
             };
