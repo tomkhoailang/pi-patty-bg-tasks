@@ -2,11 +2,13 @@
  * Task Monitor — the two-pane background-task modal, dressed like pi's /resume.
  *
  *   ╭──────────────────────────────────────────────────────────────╮
- *   │  Task Monitor                    ▶ 2 running · ✗ 1 failed      │
- *   │  ↑↓ move · ⇥ filter · ⏎ output · x kill · c copy · esc close   │
+ *   │  Task Monitor      ▶ 2 running · ✗ 1 failed         esc ✕     │
+ *   │  x kill · c copy · d remove · ⏎ output   ↑↓ · ⇥ filter        │
  *   │  Search: ▏                                                   │
  *   │ → ▶ cargo build   ┃  ▶ cargo build --release   running 2m41s │
  *   ╰──────────────────────────────────────────────────────────────╯
+ *
+ * The close button is pinned to the title bar's right edge, not the footer.
  *
  * Left pane: a filterable task list (live). Right pane: the selected task's
  * header is PINNED (icon/name/status/time/command) and only the log tail
@@ -115,6 +117,11 @@ export class TaskMonitor implements Component {
     /** Clickable footer action buttons (inner-x ranges, recomputed each render). */
     private actionRanges: { start: number; end: number; enabled: boolean; index: number; run: () => void }[] = [];
     private hoveredButton = -1;
+    /** Title-bar close button: its inner-x range, and whether the pointer is on
+     *  it. Replaces the footer `esc close` pill — the footer is over the log
+     *  pane, which is the one place the eye never is. */
+    private closeRange: { start: number; end: number } | undefined;
+    private hoveredClose = false;
     private dragging = false;
     /** Clickable filter tabs (inner-x ranges). */
     private filterRanges: { start: number; end: number; filter: TaskFilter }[] = [];
@@ -379,9 +386,17 @@ export class TaskMonitor implements Component {
         const inner: string[] = [];
 
         const title = "  " + this.bold(this.theme.fg("accent", "Task Monitor"));
-        const counts = this.counts() + "  ";
-        const gap = Math.max(1, innerW - visibleWidth(title) - visibleWidth(counts));
-        inner.push(title + " ".repeat(gap) + counts);
+        // Close pinned to the TOP-RIGHT, title-bar style.
+        const closeText = " esc ✕ ";
+        const closePill = this.hoveredClose
+            ? this.bg("toolPendingBg", this.theme.fg("accent", this.bold(closeText)))
+            : this.bg("selectedBg", this.theme.fg("text", closeText));
+        const closeW = visibleWidth(closeText);
+        const counts = this.counts();
+        const gap = Math.max(1, innerW - visibleWidth(title) - visibleWidth(counts) - closeW - 4);
+        const prefix = title + " ".repeat(gap) + counts + "   ";
+        this.closeRange = { start: visibleWidth(prefix), end: visibleWidth(prefix) + closeW };
+        inner.push(prefix + closePill);
 
         // Clickable action buttons (pills) + key hints. Ranges are inner-x offsets.
         const selJob = this.selected();
@@ -390,7 +405,6 @@ export class TaskMonitor implements Component {
             { key: "c", label: "copy", enabled: !!selJob, run: () => this.actCopy() },
             { key: "d", label: "remove", enabled: !!selJob, run: () => this.actRemove() },
             { key: "⏎", label: "output", enabled: !!selJob, run: () => this.actOutput() },
-            { key: "esc", label: "close", enabled: true, run: () => this.actClose() },
         ];
         let barLine = "  ";
         const ranges: typeof this.actionRanges = [];
@@ -553,6 +567,19 @@ export class TaskMonitor implements Component {
         const innerX = event.x - 1; // inside the frame
         const innerY = event.y - 1;
         if (innerX < 0) return undefined;
+        // Title bar: the close button sits at its right edge.
+        if (innerY === 0) {
+            const onClose = Boolean(
+                this.closeRange && innerX >= this.closeRange.start && innerX < this.closeRange.end
+            );
+            const changed = onClose !== this.hoveredClose;
+            this.hoveredClose = onClose;
+            if ((event.type === "click" || event.type === "press") && onClose) {
+                this.actClose();
+                return { handled: true, render: true };
+            }
+            return { handled: true, render: changed };
+        }
         // Footer action buttons sit on inner line 1.
         if (innerY === 1) {
             const hit = this.actionRanges.find((r) => innerX >= r.start && innerX < r.end);

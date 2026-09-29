@@ -106,6 +106,16 @@ describe("strip", () => {
         assert.deepEqual(calls, ["expand:undefined"]);
     });
 
+    test("with nothing expanded no key is swallowed, so a modal keeps esc", () => {
+        // This is what makes `o monitor` closeable: opening the modal clears the
+        // expansion, handleKey() bails on its first line, and the focused overlay
+        // receives the key instead of the strip eating it.
+        const c = comp([row()], actions({ expandedJobId: () => undefined }));
+        assert.equal(c.handleKey!("\x1b"), false);
+        assert.equal(c.handleKey!("x"), false);
+        assert.equal(c.handleKey!("o"), false);
+    });
+
     test("clicking the footer opens the task monitor", () => {
         const calls: string[] = [];
         const c = comp([row()], actions({ openMonitor: () => calls.push("monitor") }));

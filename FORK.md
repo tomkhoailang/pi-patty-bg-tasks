@@ -738,6 +738,22 @@ that had already finished. It now shows only what still needs eyes:
 - `StripTheme.bg?` and `StripActions.openMonitor()` were added; `StripActions`
   callers are unchanged.
 
+## Change 15 — modal close button on the title bar, and `esc` reaches the modal
+
+- **Close moved to the top-right.** The Task Monitor's `esc close` was the last
+  pill in the bottom action bar — over the log pane, the one place the eye never
+  is. It is now pinned to the title bar's right edge (`esc ✕`), hover-highlighted
+  and clickable through the same `actionRanges` machinery (a `closeRange` on
+  inner line 0). The `esc` KEY still closes; nothing else about the modal moved,
+  including its `anchor: "center"`.
+- **`esc` no longer swallowed on the way in.** The strip registers a
+  terminal-input listener that runs BEFORE pi's focused-component dispatch and
+  consumes its keys. Opening the modal from the strip (`o`, or the footer button)
+  left the row expanded, so `handleKey()` kept eating `esc` and the focused
+  overlay never saw it. Both entry points now clear `stripExpandedJob` first;
+  with nothing expanded `handleKey()` returns false on its first line and every
+  key flows through.
+
 ## Environment override
 
 ```sh
@@ -750,7 +766,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.35-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.36-pi15
 ```
 
 ## Rebase onto a newer upstream release

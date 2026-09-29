@@ -96,16 +96,18 @@ describe("TaskMonitor", () => {
         assert.ok(sel && sel.includes("two"), sel ?? "(no selected row)");
     });
 
-    test("footer action buttons are clickable", () => {
+    test("the title-bar close button is clickable", () => {
         let closed = false;
         const m = new TaskMonitor(makeReg([job({})]), ctx, theme as never, () => {}, () => (closed = true), "all");
-        const line = m
-            .render(100)
-            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
-            .find((l) => l.includes("esc close"));
-        assert.ok(line, "action bar rendered");
+        const lines = m.render(100).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+        // Line 1 is the title bar; the close button is pinned to its right edge.
+        const title = lines[1]!;
+        const x = title.indexOf("esc ✕");
+        assert.ok(x > 0, `close button on the title bar: ${title}`);
+        assert.ok(!lines.some((l) => l.includes("esc close")), "no longer in the footer bar");
+
         m.handleMouse({
-            type: "click", button: "left", x: line!.indexOf("esc close"), y: 2,
+            type: "click", button: "left", x, y: 1,
             screenX: 0, screenY: 0, width: 100, height: 30, shift: false, alt: false, ctrl: false,
         });
         assert.equal(closed, true);

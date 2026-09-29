@@ -310,7 +310,15 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                     () => buildStripRows(reg),
                     ctx.ui.theme,
                     {
-                        select: (job) => { void openTaskMonitor(reg, ctx, job.status === "running" ? "all" : job.status); },
+                        // Clearing the expansion is what stops the strip's
+                        // terminal-input listener from eating `esc` while the modal
+                        // is open: handleKey() bails immediately when nothing is
+                        // expanded, so the focused overlay receives the key.
+                        select: (job) => {
+                            reg.stripExpandedJob = undefined;
+                            requestStripRender(reg);
+                            void openTaskMonitor(reg, ctx, job.status === "running" ? "all" : job.status);
+                        },
                         expand: (jobId) => {
                             reg.stripExpandedJob = jobId;
                             requestStripRender(reg);
@@ -324,7 +332,11 @@ export function renderSidebar(reg: BackgroundRegistry, ctx: UiContext): void {
                             reg.stripExpandedJob = undefined;
                             renderSidebar(reg, ctx);
                         },
-                        openMonitor: () => { void openTaskMonitor(reg, ctx, "all"); },
+                        openMonitor: () => {
+                            reg.stripExpandedJob = undefined;
+                            requestStripRender(reg);
+                            void openTaskMonitor(reg, ctx, "all");
+                        },
                         expandedJobId: () => reg.stripExpandedJob,
                         listExpanded: () => reg.stripExpanded,
                         detail: stripDetail,
