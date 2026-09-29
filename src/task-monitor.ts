@@ -317,6 +317,21 @@ export class TaskMonitor implements Component {
         return Math.max(0, this.outLines.length - LOG_ROWS);
     }
 
+    /** Scrollbar cell for a viewport row: `┃` thumb over a `│` track. */
+    private scrollbarChar(row: number): string {
+        const total = this.outLines.length;
+        const view = LOG_ROWS;
+        const thumbSize = Math.max(1, Math.round((view * view) / total));
+        const maxTop = Math.max(0, view - thumbSize);
+        const thumbTop = this.maxScroll() > 0
+            ? Math.round((this.outScroll / this.maxScroll()) * maxTop)
+            : 0;
+        const isThumb = row >= thumbTop && row < thumbTop + thumbSize;
+        return isThumb
+            ? this.theme.fg("scrollbarThumb", "┃")
+            : this.theme.fg("scrollbarTrack", "│");
+    }
+
     // --- render -------------------------------------------------------------
 
     private leftWidth(width: number): number {
@@ -390,11 +405,12 @@ export class TaskMonitor implements Component {
         inner.push(searchLine);
         inner.push("");
 
-        // Right pane: pinned header + rule, then the scrolling log.
+        // Right pane: pinned header + rule, then the scrolling log (with scrollbar).
         const right: string[] = this.outHeader.length
             ? [...this.outHeader, bar("─".repeat(Math.max(1, rightW - 2))),
                ...this.outLines.slice(this.outScroll, this.outScroll + LOG_ROWS)]
             : [this.outLines[0] ?? ""];
+        const sbWidth = this.outLines.length > LOG_ROWS ? 1 : 0;
 
         const listLines = this.list.render(leftW);
         for (let i = 0; i < BODY_ROWS; i++) {
@@ -403,11 +419,14 @@ export class TaskMonitor implements Component {
             const l = selected
                 ? this.bg("selectedBg", this.theme.fg("accent", pad(truncateToWidth(strip(raw).trimStart(), leftW, ""), leftW)))
                 : pad(truncateToWidth(raw, leftW, ""), leftW);
-            const r = this.bg(
-                "customMessageBg",
-                pad(truncateToWidth(right[i] ?? "", rightW, ""), rightW)
-            );
-            inner.push(`${l}${bar("│")}${r}`);
+            let cell: string;
+            if (sbWidth && i >= OUT_HEADER_LINES) {
+                const content = pad(truncateToWidth(right[i] ?? "", rightW - 1, ""), rightW - 1);
+                cell = content + this.scrollbarChar(i - OUT_HEADER_LINES);
+            } else {
+                cell = pad(truncateToWidth(right[i] ?? "", rightW, ""), rightW);
+            }
+            inner.push(`${l}${bar("│")}${this.bg("customMessageBg", cell)}`);
         }
 
         return [
@@ -448,6 +467,12 @@ export class TaskMonitor implements Component {
         }
         if (anyKey(data, "up", "down")) {
             this.list.handleInput(data);
+            return;
+        }
+        // Scroll the selected task's output without focusing the pane.
+        if (anyKey(data, "home", "end", "pageUp", "pageDown")) {
+            this.handleOutputKey(data);
+            this.requestRender();
             return;
         }
         if (data.length === 1 && data >= " ") {

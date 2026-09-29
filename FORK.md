@@ -622,7 +622,10 @@ replacing the empty `openStripPanel` placeholder:
   `all|running|completed|failed|killed` (⇥, `1`-`5`, or **click**) plus a typed
   search over name / command / id.
 - **Right** — the selected task's live log tail, scrollable (↑↓ / PgUp/PgDn /
-  Home/End, wheel).
+  Home/End, wheel). `Home`/`End`/`PgUp`/`PgDn` act on the output **without
+  focusing the pane**; ↑↓/`j`/`k` move the list selection. A 1-column scrollbar
+  (`scrollbarTrack` `│` / `scrollbarThumb` `┃`) spans the log viewport when the
+  log is longer than the pane.
 - **Keys** — `x` kill · `c` copy the command · `d` remove · `⏎` list↔output focus ·
   `esc` close (`q` is a search character, not a close key).
 - **Mouse** — click a row to select it, wheel to scroll the output, and click the
@@ -663,7 +666,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.25-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.26-pi15
 ```
 
 ## Rebase onto a newer upstream release

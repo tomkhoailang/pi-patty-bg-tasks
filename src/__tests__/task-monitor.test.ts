@@ -1,6 +1,9 @@
 // src/__tests__/task-monitor.test.ts
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { TaskMonitor } from "../task-monitor.ts";
 import type { Job } from "../types.ts";
 
@@ -116,5 +119,24 @@ describe("TaskMonitor", () => {
             width: 100, height: 30, shift: false, alt: false, ctrl: false,
         });
         assert.ok(!m.render(100).map(stripAnsi).join("\n").includes("zzzcomplete"), "completed job hidden under running filter");
+    });
+
+    test("Home/End scroll the output without focusing it; a scrollbar is drawn", () => {
+        const log = join(tmpdir(), `tm-scroll-${process.pid}.log`);
+        writeFileSync(log, Array.from({ length: 40 }, (_, i) => `L${String(i).padStart(2, "0")}`).join("\n") + "\n");
+        const reg = makeReg([job({ id: "job-1-1", name: "long", logPath: log })]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+        const stripAnsi = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+        try {
+            assert.ok(m.render(100).map(stripAnsi).join("\n").includes("┃"), "scrollbar thumb rendered");
+            m.handleInput("\x1b[H"); // Home, list still focused
+            const home = m.render(100).map(stripAnsi).join("\n");
+            assert.ok(home.includes("L00"), "Home jumped to the top of the log");
+            m.handleInput("\x1b[F"); // End
+            const end = m.render(100).map(stripAnsi).join("\n");
+            assert.ok(!end.includes("L00"), "End jumped back to the bottom");
+        } finally {
+            unlinkSync(log);
+        }
     });
 });
