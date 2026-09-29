@@ -4,7 +4,13 @@ import assert from "node:assert/strict";
 import { TaskMonitor } from "../task-monitor.ts";
 import type { Job } from "../types.ts";
 
-const theme = { fg: (_c: string, t: string) => t };
+// Emit real SGR so the component's ANSI-strip based selected-row detection works
+// exactly as it does with pi's Theme.
+const theme = {
+    fg: (_c: string, t: string) => `\x1b[38;5;1m${t}\x1b[0m`,
+    bg: (_s: string, t: string) => `\x1b[48;5;1m${t}\x1b[0m`,
+    bold: (t: string) => `\x1b[1m${t}\x1b[0m`,
+};
 
 function job(over: Partial<Job>): Job {
     return {
@@ -37,9 +43,10 @@ describe("TaskMonitor", () => {
             "all"
         );
         const lines = m.render(100);
+        const text = lines.join("\n");
         assert.ok(lines.length > 3);
-        assert.ok(lines[0]!.includes("Task Monitor"));
-        assert.ok(lines[0]!.includes("[all]"));
+        assert.ok(text.includes("Task Monitor"));
+        assert.ok(text.includes("[all]"));
         assert.ok(lines.some((l) => l.includes("│"))); // pane divider
     });
 

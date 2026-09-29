@@ -627,6 +627,10 @@ replacing the empty `openStripPanel` placeholder:
 - Opened via `ctx.ui.custom(..., { overlay: true })`; non-TUI falls back to the
   `select()`-based `openBgListPanel`. Also reachable manually with the
   **`/monitor-task`** slash command.
+- **/resume chrome**: `DynamicBorder(accent)` rules top + bottom, a header row
+  (bold title + status counts), a `Search:` row, the selected list row on
+  `theme.bg("selectedBg")`, the output pane on `theme.bg("customMessageBg")`.
+  Overlay sized `96% × 92%`.
 - The strip no longer lists **killed** jobs — they live in the monitor's `killed`
   filter.
 
@@ -642,7 +646,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.17-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.18-pi15
 ```
 
 ## Rebase onto a newer upstream release

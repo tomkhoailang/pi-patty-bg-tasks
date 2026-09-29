@@ -1,28 +1,22 @@
 /**
- * Task Monitor — the two-pane background-task modal.
+ * Task Monitor — the two-pane background-task modal, dressed like pi's /resume.
  *
- *   ┌ Task Monitor ────────────────────────────────────────────────┐
- *   │  [all] running completed failed killed   ↑↓ move · ⇥ filter   │
- *   ├─────────────────────────────┬────────────────────────────────┤
- *   │ ▶ cargo build  12:03  2m41s │ <selected task: header + output │
- *   └─────────────────────────────┴────────────────────────────────┘
+ *   ───────────────────────────────────────────────────────────────   DynamicBorder(accent)
+ *     Task Monitor                              ▶ 2 running · ✗ 1 failed · ✓ 3 done
+ *     ↑↓ move · ⇥ filter · ⏎ output · x kill · c copy · d remove · esc close
+ *     Search: ▏
+ *    ▌▶ cargo build   │  ▶ cargo build --release   running  2m41s
+ *                     │  $ cargo build --release
+ *   ───────────────────────────────────────────────────────────────   DynamicBorder(accent)
  *
- * Left pane: a filterable task list (SelectList) — status tabs (1-5 or ⇥) plus
- * a typed search over name/command/id. Right pane: the selected task's live log
- * tail, scrollable. Mouse works on both panes; `x` kills, `c` copies the command,
- * `d` removes the task, `⏎` moves focus to/from the output pane.
- *
- * Opened via ctx.ui.custom(..., { overlay: true }). Terminal-only; the caller
- * falls back to openBgListPanel() elsewhere.
+ * Left pane: a filterable task list. Right pane: the selected task's live log
+ * tail. Reuses pi's own chrome — `DynamicBorder`, the `Theme` bg slots
+ * (`selectedBg` row, `customMessageBg` output pane) and `getSelectListTheme`
+ * conventions — so it matches /resume. Terminal-only; the caller falls back to
+ * `openBgListPanel()` elsewhere.
  */
 
-import {
-    SelectList,
-    getNativeClipboard,
-    matchesKey,
-    truncateToWidth,
-    visibleWidth,
-} from "@earendil-works/pi-tui";
+import { SelectList, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Component,
     SelectItem,
@@ -30,6 +24,7 @@ import type {
     TuiMouseEvent,
     TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { BackgroundRegistry } from "./state.ts";
 import { OUTPUT_PREVIEW_CHARS, PREVIEW_CHARS } from "./types.ts";
 import type { Job, StripTheme, UiContext } from "./types.ts";
@@ -42,9 +37,18 @@ const FILTERS = ["all", "running", "completed", "failed", "killed"] as const;
 export type TaskFilter = (typeof FILTERS)[number];
 
 /** Rows in the body (list + output), and the SelectList window. */
-const BODY_ROWS = 18;
-/** Header + hint above the body; mouse y is offset by this. */
-const HEADER_ROWS = 2;
+const BODY_ROWS = 22;
+/** Lines above the body: border + header + hint + search. Mouse y is offset by this. */
+const HEADER_ROWS = 4;
+
+/** The runtime theme is pi's full Theme; patty only types `fg`. */
+interface MonitorTheme extends StripTheme {
+    bg?(slot: string, text: string): string;
+    bold?(text: string): string;
+}
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+const strip = (s: string): string => s.replace(ANSI, "");
 
 const icon = (job: Job): string =>
     job.status === "running" ? (job.stalled ? "⏸" : "▶")
@@ -75,16 +79,24 @@ export async function openTaskMonitor(
             new TaskMonitor(
                 reg,
                 ctx,
-                theme,
+                theme as unknown as MonitorTheme,
                 () => (tui as { requestRender(): void }).requestRender(),
                 done,
                 initial
             ),
-        { overlay: true, overlayOptions: { anchor: "center", width: "80%", maxHeight: 28 } }
+        { overlay: true, overlayOptions: { anchor: "center", width: "96%", maxHeight: "92%" } }
     );
 }
 
 export class TaskMonitor implements Component {
+    private readonly reg: BackgroundRegistry;
+    private readonly ctx: UiContext;
+    private readonly theme: MonitorTheme;
+    private readonly requestRender: () => void;
+    private readonly done: (r?: void) => void;
+    private readonly listTheme: SelectListTheme;
+    private readonly border: DynamicBorder;
+
     private filter: TaskFilter;
     private query = "";
     private focus: "list" | "output" = "list";
@@ -93,18 +105,11 @@ export class TaskMonitor implements Component {
     private outFollow = true;
     private lastWidth = 80;
     private list: SelectList;
-    private readonly listTheme: SelectListTheme;
-
-    private readonly reg: BackgroundRegistry;
-    private readonly ctx: UiContext;
-    private readonly theme: StripTheme;
-    private readonly requestRender: () => void;
-    private readonly done: (r?: void) => void;
 
     constructor(
         reg: BackgroundRegistry,
         ctx: UiContext,
-        theme: StripTheme,
+        theme: MonitorTheme,
         requestRender: () => void,
         done: (r?: void) => void,
         initial: TaskFilter
@@ -116,14 +121,28 @@ export class TaskMonitor implements Component {
         this.done = done;
         this.filter = initial;
         this.listTheme = {
-            selectedPrefix: (t) => this.theme.fg("accent", t),
-            selectedText: (t) => this.theme.fg("accent", t),
-            description: (t) => this.theme.fg("dim", t),
-            scrollInfo: (t) => this.theme.fg("dim", t),
-            noMatch: (t) => this.theme.fg("dim", t),
+            // SelectList hardcodes the "→ " marker and wraps the WHOLE selected
+            // item in selectedText; we give it the background so the row matches
+            // pi's /resume, then re-paint it full-width in render().
+            selectedPrefix: () => "→ ",
+            selectedText: (t) => this.bg("selectedBg", this.theme.fg("accent", t)),
+            description: (t) => this.theme.fg("muted", t),
+            scrollInfo: (t) => this.theme.fg("muted", t),
+            noMatch: (t) => this.theme.fg("muted", t),
         };
+        this.border = new DynamicBorder((s) => this.theme.fg("accent", s));
         this.list = this.buildList();
         this.updateOutput();
+    }
+
+    // --- theme helpers ------------------------------------------------------
+
+    private bg(slot: string, text: string): string {
+        return this.theme.bg ? this.theme.bg(slot, text) : text;
+    }
+
+    private bold(text: string): string {
+        return this.theme.bold ? this.theme.bold(text) : text;
     }
 
     // --- data ---------------------------------------------------------------
@@ -180,14 +199,14 @@ export class TaskMonitor implements Component {
     private updateOutput(): void {
         const job = this.selected();
         if (!job) {
-            this.outLines = [this.theme.fg("dim", "  select a task")];
+            this.outLines = [this.theme.fg("muted", "  select a task")];
             return;
         }
         const tail = readLogTail(job, OUTPUT_PREVIEW_CHARS).replace(/\r/g, "");
         this.outLines = [
             `${icon(job)} ${jobLabel(job)}  ·  ${job.status}  ·  ${time(job)}  ·  ${dur(job)}`,
             `$ ${job.command}`,
-            this.theme.fg("dim", "─".repeat(40)),
+            "─".repeat(40),
             ...tail.split("\n"),
         ];
         if (this.outFollow) {
@@ -205,42 +224,55 @@ export class TaskMonitor implements Component {
         return Math.max(30, Math.min(56, Math.round(width * 0.4)));
     }
 
+    private counts(): string {
+        const j = [...this.reg.jobs.values()];
+        const n = (s: string) => j.filter((x) => x.status === s).length;
+        const parts: string[] = [];
+        if (n("running")) parts.push(this.theme.fg("accent", `▶ ${n("running")} running`));
+        if (n("completed")) parts.push(this.theme.fg("success", `✓ ${n("completed")} done`));
+        if (n("failed")) parts.push(this.theme.fg("error", `✗ ${n("failed")} failed`));
+        if (n("killed")) parts.push(this.theme.fg("muted", `⊘ ${n("killed")} killed`));
+        return parts.join(this.theme.fg("muted", " · "));
+    }
+
     render(width: number): string[] {
         this.lastWidth = width;
         const leftW = this.leftWidth(width);
         const rightW = Math.max(20, width - leftW - 3);
 
+        const lines: string[] = [];
+        lines.push(...this.border.render(width));
+
+        const left = "  " + this.bold(this.theme.fg("accent", "Task Monitor"));
+        const right = this.counts() + "  ";
+        const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
+        lines.push(left + " ".repeat(gap) + right);
+
+        lines.push(this.theme.fg("muted",
+            "  ↑↓ move · ⇥ filter · type to search · x kill · c copy · d remove · ⏎ focus output · esc close"));
+
         const tabs = FILTERS.map((f) =>
-            f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("dim", ` ${f} `)
+            f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("muted", ` ${f} `)
         ).join("");
-        const search = this.query ? `   search: ${this.theme.fg("accent", this.query)}` : "";
-        const header = this.theme.fg("accent", " Task Monitor") + "  " + tabs + search;
-        const hint = this.theme.fg(
-            "dim",
-            this.focus === "output"
-                ? "  ↑↓/PgUp/PgDn scroll output · ⏎/esc back"
-                : "  ↑↓ move · ⇥/1-5 filter · type to search · x kill · c copy · d remove · ⏎ output · esc close"
-        );
+        lines.push("  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
+            (this.focus === "list" ? "▏" : "") + "   " + tabs);
 
-        const left = this.list.render(leftW);
-        const out: string[] = [header, hint];
+        const listLines = this.list.render(leftW);
         for (let i = 0; i < BODY_ROWS; i++) {
-            const l = pad(truncateToWidth(left[i] ?? "", leftW, ""), leftW);
-            const r = pad(
-                truncateToWidth(this.outLines[this.outScroll + i] ?? "", rightW, ""),
-                rightW
+            const raw = listLines[i] ?? "";
+            const selected = strip(raw).trimStart().startsWith("→");
+            const l = selected
+                ? this.bg("selectedBg", this.theme.fg("accent", pad(truncateToWidth(strip(raw).trimStart(), leftW, ""), leftW)))
+                : pad(truncateToWidth(raw, leftW, ""), leftW);
+            const r = this.bg(
+                "customMessageBg",
+                pad(truncateToWidth(this.outLines[this.outScroll + i] ?? "", rightW, ""), rightW)
             );
-            out.push(`${l} ${this.theme.fg("dim", "│")} ${r}`);
+            lines.push(`${l}${this.theme.fg("borderMuted", "│")}${r}`);
         }
-        const counts = this.counts();
-        out.push(this.theme.fg("dim", `  ${counts}`));
-        return out;
-    }
 
-    private counts(): string {
-        const j = [...this.reg.jobs.values()];
-        const n = (s: string) => j.filter((x) => x.status === s).length;
-        return `▶ ${n("running")} running · ✓ ${n("completed")} done · ✗ ${n("failed")} failed · ⊘ ${n("killed")} killed`;
+        lines.push(...this.border.render(width));
+        return lines;
     }
 
     invalidate(): void {
@@ -298,7 +330,6 @@ export class TaskMonitor implements Component {
             this.rebuild();
             return;
         }
-        // Arrows drive the list; any other printable char is a search query.
         if (/^\x1b\[[0-9;]*[A-C]$/.test(data)) {
             this.list.handleInput(data);
             return;
@@ -330,15 +361,12 @@ export class TaskMonitor implements Component {
             if (res?.handled) { this.updateOutput(); this.requestRender(); }
             return res;
         }
-        if (event.x > leftW) {
-            if (event.type === "wheel" && event.wheelDelta) {
-                this.outScroll = Math.max(
-                    0,
-                    Math.min(this.maxScroll(), this.outScroll + event.wheelDelta)
-                );
-                this.outFollow = false;
-                return { handled: true, render: true };
-            }
+        if (event.type === "wheel" && event.wheelDelta) {
+            this.outScroll = Math.max(
+                0,
+                Math.min(this.maxScroll(), this.outScroll + event.wheelDelta)
+            );
+            this.outFollow = false;
             return { handled: true, render: true };
         }
         return undefined;
@@ -346,6 +374,7 @@ export class TaskMonitor implements Component {
 
     private async copy(text: string): Promise<void> {
         try {
+            const { getNativeClipboard } = await import("@earendil-works/pi-tui");
             const clip = getNativeClipboard();
             if (clip?.setText) {
                 await clip.setText(text);
