@@ -631,6 +631,13 @@ replacing the empty `openStripPanel` placeholder:
   (bold title + status counts), a `Search:` row, the selected list row on
   `theme.bg("selectedBg")`, the output pane on `theme.bg("customMessageBg")`.
   Overlay sized `96% × 92%`.
+- **Live**: a 1 s poll while open, cheapest check first — a job id/status
+  signature, then one `statSync` per tick for the selected log. The list is
+  rebuilt only when the signature changes, and the log re-read only when its
+  size changed; the timer is cleared on close / `dispose()`. Reads `reg.jobs` +
+  `reg.recentTerminal` so finished tasks persist under their status tabs.
+- **Pinned header**: the right pane's header (name · status · time · command) is
+  fixed; only the log tail scrolls.
 - The strip no longer lists **killed** jobs — they live in the monitor's `killed`
   filter.
 
@@ -646,7 +653,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.19-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.20-pi15
 ```
 
 ## Rebase onto a newer upstream release

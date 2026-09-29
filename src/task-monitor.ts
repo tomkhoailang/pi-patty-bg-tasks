@@ -8,13 +8,15 @@
  *   │ → ▶ cargo build   ┃  ▶ cargo build --release   running 2m41s │
  *   ╰──────────────────────────────────────────────────────────────╯
  *
- * Left pane: a filterable task list. Right pane: the selected task's live log
- * tail. Reuses pi's `Theme` bg slots (`selectedBg` row, `customMessageBg`
- * output pane) and `SelectListTheme` conventions, plus a rounded border drawn
- * in `borderAccent`. Terminal-only; the caller falls back to
- * `openBgListPanel()` elsewhere.
+ * Left pane: a filterable task list (live). Right pane: the selected task's
+ * header is PINNED (icon/name/status/time/command) and only the log tail
+ * scrolls. Reuses pi's `Theme` bg slots (`selectedBg` row, `customMessageBg`
+ * output pane) and `SelectListTheme` conventions, plus a rounded border in
+ * `borderAccent`. Polls once a second while open, doing the cheapest check
+ * first. Terminal-only; the caller falls back to `openBgListPanel()` elsewhere.
  */
 
+import { statSync } from "node:fs";
 import { SelectList, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
     Component,
@@ -27,7 +29,7 @@ import type { BackgroundRegistry } from "./state.ts";
 import { OUTPUT_PREVIEW_CHARS, PREVIEW_CHARS } from "./types.ts";
 import type { Job, StripTheme, UiContext } from "./types.ts";
 import { elapsedMs, formatDuration, jobLabel } from "./format.ts";
-import { forget, readLogTail, renderSidebar } from "./registry.ts";
+import { readLogTail, renderSidebar } from "./registry.ts";
 import { terminateJobSilently } from "./lifecycle.ts";
 import { openBgListPanel } from "./ui.ts";
 
@@ -36,8 +38,13 @@ export type TaskFilter = (typeof FILTERS)[number];
 
 /** Rows in the body (list + output), and the SelectList window. */
 const BODY_ROWS = 22;
-/** Lines above the body: border + header + hint + search. Mouse y is offset by this. */
+/** Right-pane lines above the scrolling log: 2 header lines + 1 rule. */
+const OUT_HEADER_LINES = 3;
+const LOG_ROWS = BODY_ROWS - OUT_HEADER_LINES;
+/** Lines above the body: border + header + hint + search. Mouse y offset. */
 const HEADER_ROWS = 4;
+/** Live poll cadence (ms). */
+const POLL_MS = 1000;
 
 /** The runtime theme is pi's full Theme; patty only types `fg`. */
 interface MonitorTheme extends StripTheme {
@@ -97,11 +104,17 @@ export class TaskMonitor implements Component {
     private filter: TaskFilter;
     private query = "";
     private focus: "list" | "output" = "list";
+    private outHeader: string[] = [];
     private outLines: string[] = [];
     private outScroll = 0;
     private outFollow = true;
     private lastWidth = 80;
     private list: SelectList;
+
+    private ticker: ReturnType<typeof setInterval> | undefined;
+    private lastSig = "";
+    private lastSelectedId: string | undefined;
+    private lastLogSize = -1;
 
     constructor(
         reg: BackgroundRegistry,
@@ -128,7 +141,22 @@ export class TaskMonitor implements Component {
             noMatch: (t) => this.theme.fg("muted", t),
         };
         this.list = this.buildList();
-        this.updateOutput();
+        this.updateOutput(true);
+        this.ticker = setInterval(() => this.tick(), POLL_MS);
+        this.ticker.unref?.();
+    }
+
+    dispose(): void {
+        this.clearTicker();
+    }
+
+    private clearTicker(): void {
+        if (this.ticker) { clearInterval(this.ticker); this.ticker = undefined; }
+    }
+
+    private close(): void {
+        this.clearTicker();
+        this.done();
     }
 
     // --- theme helpers ------------------------------------------------------
@@ -143,9 +171,22 @@ export class TaskMonitor implements Component {
 
     // --- data ---------------------------------------------------------------
 
+    /** Every known task: running (reg.jobs) + terminal (reg.recentTerminal),
+     *  de-duplicated by id. `forget()` moves finished jobs to recentTerminal. */
+    private allJobs(): Job[] {
+        const seen = new Set<string>();
+        const out: Job[] = [];
+        for (const j of [...this.reg.jobs.values(), ...(this.reg.recentTerminal ?? [])]) {
+            if (seen.has(j.id)) continue;
+            seen.add(j.id);
+            out.push(j);
+        }
+        return out;
+    }
+
     private jobs(): Job[] {
         const q = this.query.toLowerCase();
-        return [...this.reg.jobs.values()]
+        return this.allJobs()
             .filter((j) => this.filter === "all" || j.status === this.filter)
             .filter(
                 (j) =>
@@ -171,47 +212,94 @@ export class TaskMonitor implements Component {
             minPrimaryColumnWidth: 12,
             maxPrimaryColumnWidth: 30,
         });
+        list.onSelectionChange = () => { this.updateOutput(); this.requestRender(); };
         list.invalidate();
         return list;
     }
 
     private selected(): Job | undefined {
-        const item = this.list.getSelectedItem();
-        return item ? this.reg.jobs.get(item.value) : undefined;
+        const id = this.list.getSelectedItem()?.value;
+        return id ? this.allJobs().find((j) => j.id === id) : undefined;
     }
 
     /** Rebuild the list (filter/search/action) preserving the selected id. */
     private rebuild(): void {
         const prev = this.list.getSelectedItem()?.value;
-        const jobs = this.jobs();
-        const idx = jobs.findIndex((j) => j.id === prev);
+        const idx = this.jobs().findIndex((j) => j.id === prev);
         this.list = this.buildList();
-        this.list.onSelectionChange = () => { this.updateOutput(); this.requestRender(); };
         if (idx > 0) this.list.setSelectedIndex(idx);
-        this.updateOutput();
+        this.updateOutput(true);
         this.requestRender();
     }
 
-    private updateOutput(): void {
+    private remove(job: Job): void {
+        this.reg.jobs.delete(job.id);
+        const recent = this.reg.recentTerminal;
+        if (recent) {
+            const i = recent.findIndex((j) => j.id === job.id);
+            if (i >= 0) recent.splice(i, 1);
+        }
+    }
+
+    // --- polling ------------------------------------------------------------
+
+    private tick(): void {
+        const all = this.allJobs();
+        const sig = all.map((j) => `${j.id}:${j.status}:${j.stalled ? 1 : 0}`).join("|");
+        let changed = false;
+
+        if (sig !== this.lastSig) {
+            this.lastSig = sig;
+            this.rebuildListOnly();
+            changed = true;
+        }
+
+        const job = this.selected();
+        const id = job?.id;
+        let size = -1;
+        if (job) {
+            try { size = statSync(job.logPath).size; } catch { /* not created yet */ }
+        }
+        if (id !== this.lastSelectedId || size !== this.lastLogSize) {
+            const selectionChanged = id !== this.lastSelectedId;
+            this.lastSelectedId = id;
+            this.lastLogSize = size;
+            this.updateOutput(selectionChanged);
+            changed = true;
+        }
+
+        if (changed) this.requestRender();
+    }
+
+    /** Rebuild the SelectList without touching the output pane (poll path). */
+    private rebuildListOnly(): void {
+        const prev = this.list.getSelectedItem()?.value;
+        const idx = this.jobs().findIndex((j) => j.id === prev);
+        this.list = this.buildList();
+        if (idx > 0) this.list.setSelectedIndex(idx);
+    }
+
+    /** Refresh the pinned header + log tail. `resetScroll` follows the end. */
+    private updateOutput(resetScroll = false): void {
         const job = this.selected();
         if (!job) {
+            this.outHeader = [];
             this.outLines = [this.theme.fg("muted", "  select a task")];
             return;
         }
-        const tail = readLogTail(job, OUTPUT_PREVIEW_CHARS).replace(/\r/g, "");
-        this.outLines = [
+        this.outHeader = [
             `${icon(job)} ${jobLabel(job)}  ·  ${job.status}  ·  ${time(job)}  ·  ${dur(job)}`,
             `$ ${job.command}`,
-            "─".repeat(40),
-            ...tail.split("\n"),
         ];
-        if (this.outFollow) {
-            this.outScroll = Math.max(0, this.outLines.length - BODY_ROWS);
+        const tail = readLogTail(job, OUTPUT_PREVIEW_CHARS).replace(/\r/g, "");
+        this.outLines = tail.length ? tail.split("\n") : [this.theme.fg("muted", "  (no output yet)")];
+        if (resetScroll || this.outFollow) {
+            this.outScroll = Math.max(0, this.outLines.length - LOG_ROWS);
         }
     }
 
     private maxScroll(): number {
-        return Math.max(0, this.outLines.length - BODY_ROWS);
+        return Math.max(0, this.outLines.length - LOG_ROWS);
     }
 
     // --- render -------------------------------------------------------------
@@ -221,7 +309,7 @@ export class TaskMonitor implements Component {
     }
 
     private counts(): string {
-        const j = [...this.reg.jobs.values()];
+        const j = this.allJobs();
         const n = (s: string) => j.filter((x) => x.status === s).length;
         const parts: string[] = [];
         if (n("running")) parts.push(this.theme.fg("accent", `▶ ${n("running")} running`));
@@ -247,13 +335,19 @@ export class TaskMonitor implements Component {
         inner.push(title + " ".repeat(gap) + counts);
 
         inner.push(this.theme.fg("muted",
-            "  ↑↓ move · ⇥ filter · type to search · x kill · c copy · d remove · ⏎ focus output · esc close"));
+            "  ↑↓ move · ⇥ filter · x kill · c copy · d remove · ⏎ output · esc close"));
 
         const tabs = FILTERS.map((f) =>
             f === this.filter ? this.theme.fg("accent", `[${f}]`) : this.theme.fg("muted", ` ${f} `)
         ).join("");
         inner.push("  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
             (this.focus === "list" ? "▏" : "") + "   " + tabs);
+
+        // Right pane: pinned header + rule, then the scrolling log.
+        const right: string[] = this.outHeader.length
+            ? [...this.outHeader, bar("─".repeat(Math.max(1, rightW - 2))),
+               ...this.outLines.slice(this.outScroll, this.outScroll + LOG_ROWS)]
+            : [this.outLines[0] ?? ""];
 
         const listLines = this.list.render(leftW);
         for (let i = 0; i < BODY_ROWS; i++) {
@@ -264,7 +358,7 @@ export class TaskMonitor implements Component {
                 : pad(truncateToWidth(raw, leftW, ""), leftW);
             const r = this.bg(
                 "customMessageBg",
-                pad(truncateToWidth(this.outLines[this.outScroll + i] ?? "", rightW, ""), rightW)
+                pad(truncateToWidth(right[i] ?? "", rightW, ""), rightW)
             );
             inner.push(`${l}${bar("│")}${r}`);
         }
@@ -286,10 +380,10 @@ export class TaskMonitor implements Component {
         if (this.focus === "output") return this.handleOutputKey(data);
 
         if (matchesKey(data, "escape")) {
-            if (this.query) { this.query = ""; this.rebuild(); } else this.done();
+            if (this.query) { this.query = ""; this.rebuild(); } else this.close();
             return;
         }
-        if (data === "q" && !this.query) return this.done();
+        if (data === "q" && !this.query) return this.close();
         if (matchesKey(data, "tab")) {
             this.filter = FILTERS[(FILTERS.indexOf(this.filter) + 1) % FILTERS.length]!;
             this.rebuild();
@@ -316,7 +410,7 @@ export class TaskMonitor implements Component {
         }
         if (data === "d") {
             const j = this.selected();
-            if (j) { forget(this.reg, j); renderSidebar(this.reg, this.ctx); }
+            if (j) { this.remove(j); renderSidebar(this.reg, this.ctx); }
             this.rebuild();
             return;
         }
@@ -345,8 +439,8 @@ export class TaskMonitor implements Component {
         if (matchesKey(data, "escape") || matchesKey(data, "enter")) { this.focus = "list"; return; }
         if (matchesKey(data, "up") || data === "k") { this.outScroll = Math.max(0, this.outScroll - 1); this.outFollow = false; return; }
         if (matchesKey(data, "down") || data === "j") { this.outScroll = Math.min(this.maxScroll(), this.outScroll + 1); this.outFollow = false; return; }
-        if (matchesKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - BODY_ROWS); this.outFollow = false; return; }
-        if (matchesKey(data, "pageDown")) { this.outScroll = Math.min(this.maxScroll(), this.outScroll + BODY_ROWS); this.outFollow = false; return; }
+        if (matchesKey(data, "pageUp")) { this.outScroll = Math.max(0, this.outScroll - LOG_ROWS); this.outFollow = false; return; }
+        if (matchesKey(data, "pageDown")) { this.outScroll = Math.min(this.maxScroll(), this.outScroll + LOG_ROWS); this.outFollow = false; return; }
     }
 
     handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
