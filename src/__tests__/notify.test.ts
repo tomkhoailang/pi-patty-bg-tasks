@@ -112,18 +112,28 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.ok(nudges.some((n) => n.includes('"job-1-2"')));
     });
 
-    void it("injects mid-turn instead of holding to the turn boundary", async () => {
+    void it("never steers: a notice is ours, not the user's", async () => {
         const { reg, pi, ctx, messages, deliverOptions } = harness();
         noteAgentStart(reg, pi as never, ctx);
         enqueueFinished(reg, pi as never, ctx, mkJob({}));
         await new Promise((r) => setTimeout(r, 600));
-        // §8 Q3: a steer queued while the agent runs lands before its next LLM
-        // call — a call it was already going to make — so mid-turn news costs no
-        // extra turn and must NOT be parked until agent_end.
-        assert.equal(messages.length, 1, "injected during the turn");
-        assert.equal(deliverOptions[0]?.deliverAs, "steer");
+        // pi presents a `steer` as user-shaped input, so a steered notice reads as
+        // if the user had typed it. Notices always go out as followUp.
+        assert.equal(messages.length, 1, "flushed after the coalescing window");
+        assert.equal(deliverOptions[0]?.deliverAs, "followUp");
+        assert.notEqual(deliverOptions[0]?.deliverAs, "steer");
         noteAgentEnd(reg, pi as never, ctx);
         assert.equal(messages.length, 1, "nothing left to flush at the boundary");
+    });
+
+    void it("wakes an idle agent without impersonating it", async () => {
+        const { reg, pi, ctx, messages, deliverOptions } = harness();
+        // agent idle (agentBusy=false by default)
+        enqueueFinished(reg, pi as never, ctx, mkJob({}));
+        await new Promise((r) => setTimeout(r, 600));
+        assert.equal(messages.length, 1);
+        assert.equal(deliverOptions[0]?.deliverAs, "followUp", "still our block");
+        assert.equal(deliverOptions[0]?.triggerTurn, true, "but it wakes the agent");
     });
 
     void it("while idle, a finish flushes via the fallback timer (coalesced)", async () => {
@@ -142,17 +152,17 @@ void describe("notify — turn-boundary coalescing", () => {
         assert.equal(nudges.length, 0);
     });
 
-    void it("noteAgentStart drains stranded notices, then injects new ones mid-turn", async () => {
+    void it("noteAgentStart drains stranded notices, then flushes new ones mid-turn", async () => {
         const { reg, pi, ctx, messages } = harness();
         // Simulate notices left pending by a prior turn that threw before agent_end.
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-stranded" }));
         noteAgentStart(reg, pi as never, ctx); // drains the stranded notice up front
         assert.equal(messages.length, 1, "stranded notice flushed at turn start");
 
-        // New finishes during this turn are injected into the turn, not parked.
+        // New finishes during this turn are flushed as our own block.
         enqueueFinished(reg, pi as never, ctx, mkJob({ id: "job-new" }));
         await new Promise((r) => setTimeout(r, 600));
-        assert.equal(messages.length, 2, "new notice injected mid-turn");
+        assert.equal(messages.length, 2, "new notice flushed mid-turn");
         noteAgentEnd(reg, pi as never, ctx);
         assert.equal(messages.length, 2, "nothing left for the turn boundary");
     });
@@ -302,13 +312,15 @@ void describe("notify — wake shape per path", () => {
     // Suppress the re-queue-path log lines during the throw-path tests so test
     // output stays clean. Restore in afterEach.
     setLogger({ error: () => {} });
-    void it("idle-path flush steers AND triggers a turn (so the agent reacts)", () => {
+    void it("idle-path flush wakes the agent as our own block (never a steer)", () => {
         const { reg, pi, ctx, messages, deliverOptions } = harness();
         enqueueFinished(reg, pi as never, ctx, mkJob({}));
         flushIdleNotices(reg, pi as never, ctx);
         assert.equal(messages.length, 1);
         assert.equal(deliverOptions.length, 1);
-        assert.equal(deliverOptions[0].deliverAs, "steer");
+        // followUp keeps the notice a patty block; triggerTurn still wakes the
+        // agent. `steer` would be presented as user-shaped input.
+        assert.equal(deliverOptions[0].deliverAs, "followUp");
         assert.equal(deliverOptions[0].triggerTurn, true);
     });
 

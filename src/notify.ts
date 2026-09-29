@@ -6,10 +6,12 @@
  * the agent's next reply. So instead we accumulate every completion +
  * monitor-terminal notice and flush ONE summary after a short coalescing window.
  *
- * Delivery follows docs/antigravity-background-tasks.md §8 Q3: a MID-TURN notice
- * is injected as a steer, which lands before the agent's next LLM call — a call
- * it was going to make anyway — so it costs no extra turn. Waking an IDLE agent
- * does cost one, so it is reserved for terminal notices.
+ * Delivery NEVER uses `steer`. pi presents a steer as user-shaped input, so the
+ * notice reads as if the user had typed it ("that's not mine"); notices go out as
+ * `followUp` — a custom block with our own label — and `triggerTurn` is set only
+ * when the news warrants waking an idle agent. The trade is deliberate: a notice
+ * that lands mid-turn surfaces at the turn boundary rather than riding the next
+ * LLM call, and that is cheaper than misattributing our words to the user.
  *
  * Monitor *stream* events (matched log lines) are NOT routed here — they carry
  * data the agent is actively watching and stay live. Only the terminal/status
@@ -21,7 +23,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
     DELIVER_FOLLOWUP,
+    DELIVER_FOLLOWUP_WAKE,
     DELIVER_STEER,
+    type Delivery,
     EVENT,
     JOB_FINISH_COALESCE_MS,
     NOTIFY_POLICY,
@@ -34,18 +38,20 @@ import { formatNotices } from "./notice.ts";
 import { policyAllowsTerminal } from "./notify-policy.ts";
 
 /**
- * Choose how a notice is delivered (§8 Q3).
+ * Choose how a notice is delivered.
  *
- * Mid-turn injection is effectively free: a steer is queued and delivered after
- * the current tool calls, before the next LLM call — no extra turn. Idle, the
- * only way to be heard is to trigger a turn, so that is spent only when the
- * caller says the message is worth a turn (`wakeWhenIdle`).
+ * Never `steer`: pi delivers a steer as user-shaped input, which makes patty's
+ * notice read as if the user had typed it ("that's not mine"). `followUp` keeps
+ * it a custom block with our own label; `triggerTurn` is set when the news is
+ * worth waking an idle agent for. The cost is accepted deliberately: a notice
+ * that lands mid-turn now surfaces at the turn boundary instead of riding the
+ * next LLM call, because attribution matters more than shaving that turn.
  */
 export function pickDelivery(
-    reg: BackgroundRegistry,
+    _reg: BackgroundRegistry,
     opts: { wakeWhenIdle: boolean }
-): typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP {
-    return reg.agentBusy || opts.wakeWhenIdle ? DELIVER_STEER : DELIVER_FOLLOWUP;
+): Delivery {
+    return opts.wakeWhenIdle ? DELIVER_FOLLOWUP_WAKE : DELIVER_FOLLOWUP;
 }
 
 /** Queue a finished job for the next coalesced notice. */
@@ -126,8 +132,8 @@ export function noteAgentEnd(
     flushTurnBoundaryNotices(reg, pi, ctx);
 }
 
-/** Idle-path flush: wakes the agent via a steer so the agent actually reacts
- *  to the finished job (the user isn't engaged to prompt otherwise). */
+/** Idle-path flush: a wake (`followUp` + `triggerTurn`) so the finished job
+ *  actually gets noticed when the user isn't engaged to prompt. */
 export function flushIdleNotices(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
@@ -164,7 +170,7 @@ function sendCoalescedNotice(
     reg: BackgroundRegistry,
     pi: ExtensionAPI,
     ctx: UiContext,
-    deliver: typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP
+    deliver: Delivery
 ): void {
     clearFlushTimer(reg);
     const monitors = reg.pendingMonitorEnds;

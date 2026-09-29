@@ -31,6 +31,7 @@ import {
     QUIET_MS,
     STALL_CHECK_INTERVAL_MS,
     STALL_TAIL_BYTES,
+    type Delivery,
     type Job,
 } from "./types.ts";
 import { policyAllowsDecision } from "./notify-policy.ts";
@@ -66,7 +67,7 @@ export function watchStalls(args: {
      *  decision event). Supplied by the caller, which knows whether the agent is
      *  mid-turn — mid-turn injection needs no turn of its own. Defaults to the
      *  passive follow-up. */
-    deliver?: () => typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP;
+    deliver?: () => Delivery;
     /** Threshold overrides, in ms. Defaults to QUIET_MS / QUIET_LONG_MS; tests
      *  drive the window instead of waiting a minute. */
     quietMs?: number;
@@ -200,7 +201,7 @@ function sendDecision(
     logPath: string,
     quietForMs: number,
     blocked: boolean,
-    deliver: typeof DELIVER_STEER | typeof DELIVER_FOLLOWUP
+    deliver: Delivery
 ): void {
     const mins = Math.round((quietForMs / 60_000) * 10) / 10;
     const tail = blocked ? tailOf(logPath, STALL_TAIL_BYTES) : "";

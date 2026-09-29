@@ -211,7 +211,8 @@ Background job running
   → Two edges do speak, once per silence episode: a prompt-like tail (blocked on
     input) and silence past the long threshold → one `job_decide` event
   → Oversize detection: if the output blows past the limit, the job is killed
-  → On completion: the agent is notified (injected mid-turn, or a wake when idle)
+  → On completion: the agent is notified as a patty block (never in the user's voice),
+    delivered when the turn boundary allows, waking the agent if it was idle
 
 Schedule (a job of kind "timer")
   → Fires later, or on a cron-style repeat, bounded by maxFires

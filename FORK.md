@@ -974,6 +974,22 @@ It now documents the real flow, the `schedule` tool, and a **Limits** section: n
 daemon tier, stdin is `/dev/null`, silence is not an event, the pull verbs are the
 only sanctioned read path, and timers are not a task queue.
 
+## Change 28 — notices are never delivered as the user's voice
+
+A completion notice was delivered with `deliverAs: "steer"`, and pi presents a steer
+as user-shaped input — so patty's words showed up looking like the user's, which is
+how "1 background job finished… it's not mine" happened. The session transcript
+shows the notice itself was always a `custom_message` (role none); the *steer
+delivery* is what made it read as the user's.
+
+Delivery is now `followUp` — a custom block with patty's own label — plus
+`triggerTurn: true` when the news should wake an idle agent (`DELIVER_FOLLOWUP_WAKE`).
+`steer` is no longer used anywhere for notices.
+
+Accepted cost: a notice that lands mid-turn now surfaces at the turn boundary
+instead of riding the next LLM call (the §8 Q3 optimization). Attribution beats
+shaving that turn.
+
 ## Environment override
 
 ```sh

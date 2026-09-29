@@ -207,6 +207,22 @@ export type EventName = (typeof EVENT)[keyof typeof EVENT];
  *  Use when the message IS the answer to a question the agent must address
  *  now (a finished background job while idle, a deadline decision). */
 export const DELIVER_STEER = { deliverAs: "steer", triggerTurn: true } as const;
+
+/**
+ * A notice that should WAKE an idle agent, without impersonating the user.
+ *
+ * `steer` also triggers a turn, but pi delivers a steer as user-shaped input
+ * ("queued while the agent is running… delivered before the next LLM call"), so
+ * the notice reads as if the user had typed it. `followUp` keeps it a custom
+ * block of ours; `triggerTurn` still starts a turn when one is warranted.
+ */
+export const DELIVER_FOLLOWUP_WAKE = { deliverAs: "followUp", triggerTurn: true } as const;
+
+/** Any of the three delivery shapes patty may use for a notice. */
+export type Delivery =
+    | typeof DELIVER_STEER
+    | typeof DELIVER_FOLLOWUP
+    | typeof DELIVER_FOLLOWUP_WAKE;
 /** Queue the message behind the current turn as a PASSIVE follow-up. The agent
  *  picks it up on its next natural turn (when the user re-engages or the
  *  current turn ends) but it does NOT spawn a new turn on its own. This mirrors
