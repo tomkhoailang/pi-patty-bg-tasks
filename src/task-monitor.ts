@@ -43,8 +43,8 @@ const BODY_ROWS = 22;
 /** Right-pane lines above the scrolling log: 2 header lines + 1 rule. */
 const OUT_HEADER_LINES = 3;
 const LOG_ROWS = BODY_ROWS - OUT_HEADER_LINES;
-/** Inner-content lines before the body: title + hint + search. */
-const INNER_HEADER = 3;
+/** Inner-content lines before the body: title + action bar + blank + search + blank. */
+const INNER_HEADER = 5;
 /** Live poll cadence (ms). */
 const POLL_MS = 1000;
 
@@ -374,6 +374,7 @@ export class TaskMonitor implements Component {
         }
         this.actionRanges = ranges;
         inner.push(barLine + this.theme.fg("dim", "↑↓ · ⇥ filter · type to search"));
+        inner.push("");
         const tabsLine = "  " + this.theme.fg("muted", "Search: ") + this.theme.fg("accent", this.query) +
             (this.focus === "list" ? "▏" : "") + "   ";
         let searchLine = tabsLine;
@@ -387,6 +388,7 @@ export class TaskMonitor implements Component {
         }
         this.filterRanges = franges;
         inner.push(searchLine);
+        inner.push("");
 
         // Right pane: pinned header + rule, then the scrolling log.
         const right: string[] = this.outHeader.length
@@ -517,8 +519,8 @@ export class TaskMonitor implements Component {
             this.hoveredButton = -1;
             return { handled: true, render: true };
         }
-        // Filter tabs sit on inner line 2.
-        if (innerY === 2) {
+        // Filter tabs sit on inner line 4 (title, action bar, blank, search).
+        if (innerY === 4) {
             if (event.type === "click" || event.type === "press") {
                 const hit = this.filterRanges.find((r) => innerX >= r.start && innerX < r.end);
                 if (hit) { this.filter = hit.filter; this.rebuild(); return { handled: true, render: true }; }

@@ -77,9 +77,9 @@ describe("TaskMonitor", () => {
         ]);
         const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
         m.render(100);
-        // Body row 1 is at overall y=5 (top border + title + action bar + search).
+        // Body row 1 is at overall y=7 (border + title + action + blank + search + blank + row0).
         m.handleMouse({
-            type: "click", button: "left", x: 3, y: 5, screenX: 3, screenY: 5,
+            type: "click", button: "left", x: 3, y: 7, screenX: 3, screenY: 7,
             width: 100, height: 30, shift: false, alt: false, ctrl: false,
         });
         const lines = m.render(100).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
@@ -112,7 +112,7 @@ describe("TaskMonitor", () => {
         const line = m.render(100).map(stripAnsi).find((l) => l.includes("Search:"))!;
         const x = line.indexOf(" running ");
         m.handleMouse({
-            type: "click", button: "left", x, y: 3, screenX: x, screenY: 3,
+            type: "click", button: "left", x, y: 5, screenX: x, screenY: 5,
             width: 100, height: 30, shift: false, alt: false, ctrl: false,
         });
         assert.ok(!m.render(100).map(stripAnsi).join("\n").includes("zzzcomplete"), "completed job hidden under running filter");
