@@ -39,7 +39,10 @@ function makeReg(jobs: Job[]) {
     return { jobs: new Map(jobs.map((j) => [j.id, j])) } as never;
 }
 
-const ctx = { mode: "tui", ui: { theme, notify: () => {} } } as never;
+const ctx = {
+    mode: "tui",
+    ui: { theme, notify: () => {}, setWidget: () => {}, setStatus: () => {}, onTerminalInput: () => {} },
+} as never;
 
 describe("TaskMonitor", () => {
     test("renders a two-pane frame with the title and filter tabs", () => {
@@ -78,6 +81,32 @@ describe("TaskMonitor", () => {
         assert.equal(closed, false);
         m.handleInput("\x1b");
         assert.equal(closed, true);
+    });
+
+    test("capitals are actions; lowercase stays pure search text", () => {
+        const reg = makeReg([
+            job({ id: "job-1-1", name: "docker build", command: "docker build" }),
+            job({ id: "job-1-2", name: "cargo build", command: "cargo build" }),
+        ]);
+        const m = new TaskMonitor(reg, ctx, theme as never, () => {}, () => {}, "all");
+
+        // Lowercase `d`, `c`, `k` must reach the query box, not the actions.
+        for (const ch of "dck") m.handleInput(ch);
+        let text = m
+            .render(100)
+            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+            .join("\n");
+        assert.ok(text.includes("Search: dck"), `typed into the box: ${text}`);
+        assert.ok(text.includes("docker build"), "the row is still listed");
+
+        // A capital reaches the action instead: `D` drops the row from the list.
+        for (const _ of "dck") m.handleInput("\x7f");
+        m.handleInput("D");
+        text = m
+            .render(100)
+            .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+            .join("\n");
+        assert.ok(!text.includes("docker build"), "D removed the selected row");
     });
 
     test("every printable key types into the search", () => {

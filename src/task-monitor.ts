@@ -3,7 +3,7 @@
  *
  *   ╭──────────────────────────────────────────────────────────────╮
  *   │  Task Monitor      ▶ 2 running · ✗ 1 failed         esc ✕     │
- *   │  kill · copy · remove    ↑↓ · ⇥ filter · type to search  │
+ *   │  K kill · C copy · D remove   ↑↓ · ⇥ filter · type to search │
  *   │  Search: ▏                                                   │
  *   │ → ▶ cargo build   ┃  ▶ cargo build --release   running 2m41s │
  *   ╰──────────────────────────────────────────────────────────────╯
@@ -399,18 +399,19 @@ export class TaskMonitor implements Component {
         this.closeRange = { start: visibleWidth(prefix), end: visibleWidth(prefix) + closeW };
         inner.push(prefix + closePill);
 
-        // Clickable action buttons (pills). Ranges are inner-x offsets.
+        // Clickable action buttons (pills), each with its capital key. Ranges are
+        // inner-x offsets.
         const selJob = this.selected();
-        const acts: { label: string; enabled: boolean; run: () => void }[] = [
-            { label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
-            { label: "copy", enabled: !!selJob, run: () => this.actCopy() },
-            { label: "remove", enabled: !!selJob, run: () => this.actRemove() },
+        const acts: { key: string; label: string; enabled: boolean; run: () => void }[] = [
+            { key: "K", label: "kill", enabled: selJob?.status === "running", run: () => this.actKill() },
+            { key: "C", label: "copy", enabled: !!selJob, run: () => this.actCopy() },
+            { key: "D", label: "remove", enabled: !!selJob, run: () => this.actRemove() },
         ];
         let barLine = "  ";
         const ranges: typeof this.actionRanges = [];
         for (let i = 0; i < acts.length; i++) {
             const a = acts[i]!;
-            const text = ` ${a.label} `;
+            const text = ` ${a.key} ${a.label} `;
             const styled = !a.enabled
                 ? this.bg("selectedBg", this.theme.fg("muted", text))
                 : this.hoveredButton === i
@@ -485,10 +486,14 @@ export class TaskMonitor implements Component {
             this.rebuild();
             return;
         }
-        // No single-letter or digit shortcuts: EVERY printable key belongs to the
-        // search box, so typing `cargo` cannot fire copy/remove on its way in, and
-        // a query may contain digits (`8080`, `job-1-2`). kill/copy/remove and the
-        // status filters are buttons, and `tab` cycles the filters.
+        // Lowercase letters and digits are PURE search text: typing `cargo` must
+        // not fire copy/remove on its way in, and a query may contain digits
+        // (`8080`, `job-1-2`). Actions live on the CAPITALS instead, which cost
+        // nothing to search — fuzzyMatch lowercases both sides, so `docker` and
+        // `Docker` are the same query.
+        if (data === "K") return void this.actKill();
+        if (data === "C") return void this.actCopy();
+        if (data === "D") return void this.actRemove();
         if (matchesKey(data, "backspace") || data === "\x7f") {
             this.query = this.query.slice(0, -1);
             this.rebuild();

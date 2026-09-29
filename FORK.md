@@ -796,6 +796,21 @@ bar reads `kill · copy · remove`, and the filters are reached by clicking the
 Still bound: `esc` (close) · `⇥` (filter) · `⌫` (search) · `↑↓` (list) ·
 `Home`/`End`/`PageUp`/`PageDown` (log).
 
+## Change 19 — capitals are the action keys
+
+Buttons-only was too strict and single lowercase letters were unusable (typing
+`cargo` fired copy/remove). The compromise: **lowercase letters and digits are
+pure search text; the capitals are the actions.**
+
+- `K` kill · `C` copy · `D` remove, mirrored on the pills as ` K kill `.
+- Free for search, because `fuzzyMatch` lowercases both sides — `docker` and
+  `Docker` are the same query, so a capital carries no matching information.
+- Blast radius if hit by habit: `K` needs a *running* selection, `C` only
+  overwrites the clipboard, and `D` drops the row from the list only
+  (`remove()` touches the registry; the log file stays on disk).
+- Digits are still search text, so `1-5` no longer switch filters — click the
+  tabs or press `⇥`.
+
 ## Environment override
 
 ```sh
@@ -808,7 +823,7 @@ Unset or non-positive values fall back to 15s.
 ## Install
 
 ```sh
-pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.39-pi15
+pi install git:github.com/tomkhoailang/pi-patty-bg-tasks@v1.6.40-pi15
 ```
 
 ## Rebase onto a newer upstream release
