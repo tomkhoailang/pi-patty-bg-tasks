@@ -24,7 +24,8 @@ void describe("commands", () => {
         assert.ok(commands.has("bg"));
         assert.ok(commands.has("bg-list"));
         assert.ok(commands.has("bg-version"));
-        assert.match(notices[0], /^pi-patty-bg-tasks@\d+\.\d+\.\d+ loaded from /);
+        // Fork versions carry a `-pi15` pre-release suffix.
+        assert.match(notices[0], /^pi-patty-bg-tasks@\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)? loaded from /);
         assert.match(notices[0], /pi-patty-bg-tasks$/);
     });
 });

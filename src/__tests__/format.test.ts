@@ -38,7 +38,8 @@ void describe("formatDuration", () => {
     void it("minutes + seconds", () => {
         assert.equal(formatDuration(60_000), "1m0s");
         assert.equal(formatDuration(125_000), "2m5s");
-        assert.equal(formatDuration(3_600_000), "60m0s");
+        assert.equal(formatDuration(3_600_000), "1h0m");
+        assert.equal(formatDuration(6_000_000), "1h40m"); // 100m → keeps the column short
     });
 });
 
